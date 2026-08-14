@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>사각형 뒤집기 패스 · 종목 4</title>
+<title>사각형 대형 만들기 · 종목 4</title>
 <link rel="stylesheet" href="../css/jua.css">
 <link rel="stylesheet" href="../css/style.css?v=4">
 </head>
@@ -18,13 +18,8 @@
     <button class="home-btn" id="homeBtn">🏠</button>
   </div>
 
-  <div class="gesture-row" id="turnRow" style="display:none">
-    <button class="gesture-btn" id="turnL" aria-label="왼쪽으로 45도 돌리기">↺</button>
-    <button class="gesture-btn" id="turnR" aria-label="오른쪽으로 45도 돌리기">↻</button>
-  </div>
-
   <div class="overlay-panel" id="loadingPanel">
-    <h2>🤾 사각형 뒤집기 패스</h2>
+    <h2>🤾 사각형 대형 만들기</h2>
     <p id="loadingText">준비 중…</p>
   </div>
 
@@ -38,7 +33,6 @@
   <div class="overlay-panel ready-flash" id="readyPanel" style="display:none">
     <h2>✋ 좋아요! 준비됐어요</h2>
   </div>
-
 
   <div class="overlay-panel rule-card" id="rulePanel" style="display:none">
     <div class="rule-inner">
@@ -91,7 +85,7 @@ import {
   drawVignette, spawnConfetti, updateConfetti, drawConfetti,
 } from "../js/engine.js?v=2";
 import {
-  CUTE, FONT, LANE_COLORS, bob, drawStickerRect, drawChunkyText,
+  CUTE, FONT, LANE_COLORS, bob, drawSticker, drawChunkyText,
   spawnSparkles, updateSparkles, drawSparkles, makeDrifters, drawDrifters,
   drawBunting, drawGloveCursor, drawLevelStars,
 } from "../js/cute.js?v=4";
@@ -105,11 +99,14 @@ import {
 requestWakeLock();
 
 const UNIT = "g4";
-const TITLE = "사각형 뒤집기 패스";
+const TITLE = "사각형 대형 만들기";
 const RECORD_SUFFIX = "개";
 const MEDALS = { bronze: 5, silver: 8, gold: 11 };
 const mode = InputMode.get();
-const RULE = { emoji: "🤾", title: "사각형 뒤집기 패스", rule: "조건에 맞는 조각을 잡으면 손을 따라와요. 몸을 좌우로 기울여 45°씩 돌린 뒤, 수비 블록의 빈틈으로 가져가면 쏙!" };
+const RULE = {
+  emoji: "🤾", title: "사각형 대형 만들기",
+  rule: "친구 세 명이 서 있어요. 제시된 사각형이 되는 네 번째 자리를 짚으면 대형 완성, 골!",
+};
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("gameCanvas");
@@ -118,7 +115,6 @@ let drifters = makeDrifters(12, dims.w, dims.h);
 window.addEventListener("resize", () => {
   dims = fitCanvasToScreen(canvas);
   drifters = makeDrifters(12, dims.w, dims.h);
-  if (state === "playing") layoutPieces();
 });
 
 const sound = new SoundKit();
@@ -128,62 +124,157 @@ const isMuted = () => localStorage.getItem("smo_muted") === "1";
 document.getElementById("homeBtn").addEventListener("click", () => { bgm.stop(); location.href = "../index.html"; });
 document.getElementById("homeBtn2").addEventListener("click", () => { bgm.stop(); location.href = "../index.html"; });
 
-function randInt(min, max) { return min + Math.floor(Math.random() * (max - min + 1)); }
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
-function shuffle(arr) { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } return arr; }
 
-// -------------------- 사각형 --------------------
-// trap = 평행한 변이 한 쌍이라도 있는가(=사다리꼴), para = 평행사변형, rhom = 마름모, rect = 직사각형
-const SHAPES = [
-  { key: "square", name: "정사각형", trap: 1, para: 1, rhom: 1, rect: 1,
-    pts: [[-0.55, -0.55], [0.55, -0.55], [0.55, 0.55], [-0.55, 0.55]] },
-  { key: "rect", name: "직사각형", trap: 1, para: 1, rhom: 0, rect: 1,
-    pts: [[-0.75, -0.44], [0.75, -0.44], [0.75, 0.44], [-0.75, 0.44]] },
-  { key: "rhom", name: "마름모", trap: 1, para: 1, rhom: 1, rect: 0,
-    pts: [[0, -0.72], [0.62, 0], [0, 0.72], [-0.62, 0]] },
-  { key: "para", name: "평행사변형", trap: 1, para: 1, rhom: 0, rect: 0,
-    pts: [[-0.78, 0.42], [-0.34, -0.42], [0.78, -0.42], [0.34, 0.42]] },
-  { key: "trap", name: "사다리꼴", trap: 1, para: 0, rhom: 0, rect: 0,
-    pts: [[-0.78, 0.42], [-0.40, -0.42], [0.40, -0.42], [0.78, 0.42]] },
-  { key: "gen", name: "사각형", trap: 0, para: 0, rhom: 0, rect: 0,
-    pts: [[-0.72, 0.38], [-0.46, -0.48], [0.62, -0.28], [0.74, 0.46]] },
-];
+// -------------------- 벡터 --------------------
+const add = (a, b) => ({ x: a.x + b.x, y: a.y + b.y });
+const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y });
+const mul = (a, k) => ({ x: a.x * k, y: a.y * k });
+const dot = (a, b) => a.x * b.x + a.y * b.y;
+const cross = (a, b) => a.x * b.y - a.y * b.x;
+const len = (a) => Math.hypot(a.x, a.y);
+const rot = (a, t) => ({ x: a.x * Math.cos(t) - a.y * Math.sin(t), y: a.x * Math.sin(t) + a.y * Math.cos(t) });
+const dist2 = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
 
-// 조건은 "맞는 것 1개 이상, 틀린 것 2개 이상"이 나오는 것만 쓴다.
-// (예: "평행한 변이 한 쌍이라도 있는 사각형"은 여섯 중 다섯이 해당돼 오답 후보가 모자란다)
+// -------------------- 사각형 성질 판정 --------------------
+// 네 점을 A→B→C→D 순서로 이은 사각형이 어떤 사각형인지 실제로 계산해 판정한다.
+// 문제를 만들 때도, 오답 후보를 거를 때도 이 함수 하나만 쓴다 —
+// 그래서 "정답 자리는 성질로만 정해진다"가 코드 수준에서 보장된다.
+function classify(A, B, C, D) {
+  const s = [sub(B, A), sub(C, B), sub(D, C), sub(A, D)]; // AB, BC, CD, DA
+  const L = s.map(len);
+  if (L.some((v) => v < 1e-4)) return { trap: false, para: false, rhom: false, rect: false, square: false, L, p1: false, p2: false };
+  const parallel = (p, q) => Math.abs(cross(p, q)) < 0.05 * len(p) * len(q); // 약 3° 이내
+  const p1 = parallel(s[0], s[2]); // AB ∥ CD
+  const p2 = parallel(s[1], s[3]); // BC ∥ DA
+  const para = p1 && p2;
+  const trap = p1 || p2;
+  const same = (a, b) => Math.abs(a - b) < 0.07 * Math.max(a, b);
+  const rhom = para && same(L[0], L[1]) && same(L[1], L[2]) && same(L[2], L[3]);
+  const rect = para && Math.abs(dot(sub(A, B), sub(C, B))) < 0.06 * L[0] * L[1];
+  return { trap, para, rhom, rect, square: rhom && rect, p1, p2, L };
+}
+
+// 미리보기가 꼬여 보이지 않도록 볼록 사각형만 쓴다
+function convex(A, B, C, D) {
+  const p = [A, B, C, D];
+  let sign = 0;
+  for (let i = 0; i < 4; i++) {
+    const z = cross(sub(p[(i + 1) % 4], p[i]), sub(p[(i + 2) % 4], p[(i + 1) % 4]));
+    if (Math.abs(z) < 1e-5) return false;
+    const s = z > 0 ? 1 : -1;
+    if (sign === 0) sign = s;
+    else if (s !== sign) return false;
+  }
+  return true;
+}
+
+// -------------------- 문제 --------------------
 const CONDS = {
   1: [
-    { text: "평행사변형", test: (s) => s.para },
-    { text: "네 변의 길이가 모두 같은 사각형", test: (s) => s.rhom },
+    { key: "trap", text: "사다리꼴", test: (c) => c.trap },
+    { key: "rect", text: "직사각형", test: (c) => c.rect },
   ],
   2: [
-    { text: "마름모", test: (s) => s.rhom },
-    { text: "직사각형", test: (s) => s.rect },
-    { text: "평행사변형", test: (s) => s.para },
-    { text: "정사각형", test: (s) => s.rhom && s.rect },
+    { key: "para", text: "평행사변형", test: (c) => c.para },
+    { key: "rhom", text: "마름모", test: (c) => c.rhom },
   ],
   3: [
-    { text: "마름모이면서 직사각형인 사각형", test: (s) => s.rhom && s.rect },
-    { text: "평행사변형이지만 마름모는 아닌 사각형", test: (s) => s.para && !s.rhom },
-    { text: "사다리꼴이지만 평행사변형은 아닌 사각형", test: (s) => s.trap && !s.para },
+    { key: "square", text: "정사각형", test: (c) => c.square },
+    { key: "paraNotRhom", text: "평행사변형이지만 마름모는 아닌 사각형", test: (c) => c.para && !c.rhom },
+    { key: "trapNotPara", text: "사다리꼴이지만 평행사변형은 아닌 사각형", test: (c) => c.trap && !c.para },
   ],
 };
 
-const TURNS = [45, 90, 135, 180];
+// 좌표는 "코트의 짧은 변 = 1"인 단위 공간에 두고, 그릴 때만 화면 좌표로 바꾼다.
+// 이렇게 해야 화면 비율이 어떻든 정사각형이 정사각형으로 보인다.
+function court() {
+  const { w, h } = dims;
+  const x0 = w * 0.05, x1 = w * 0.95;
+  const y0 = topBand().y1 + h * 0.06, y1 = h * 0.93;
+  const s = Math.min(x1 - x0, y1 - y0);
+  return { x0, y0, x1, y1, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, s, hx: (x1 - x0) / 2 / s, hy: (y1 - y0) / 2 / s };
+}
+function toScreen(p) { const c = court(); return { x: c.cx + p.x * c.s, y: c.cy + p.y * c.s }; }
 
 function genRound(level) {
-  const usable = CONDS[level].filter(
-    (c) => SHAPES.some((s) => c.test(s)) && SHAPES.filter((s) => !c.test(s)).length >= 2,
-  );
-  const cond = pick(usable.length ? usable : CONDS[1]);
-  const yes = SHAPES.filter((s) => cond.test(s));
-  const no = SHAPES.filter((s) => !cond.test(s));
-  const chosen = pick(yes);
-  const others = shuffle([...no]).slice(0, 2);
-  const pieces = shuffle([chosen, ...others]);
-  const turn = level === 1 ? pick([90, 180]) : pick(TURNS);
-  const dir = Math.random() < 0.5 ? -1 : 1; // 왼쪽/오른쪽으로 돌리기
-  return { cond, pieces, answerKey: chosen.key, turn, dir };
+  const cond = pick(CONDS[level]);
+  const c = court();
+  for (let attempt = 0; attempt < 400; attempt++) {
+    const size = 0.28 + Math.random() * 0.10;
+    const th = Math.random() * Math.PI * 2;
+    let u, v, k = 1;
+
+    if (cond.key === "rect") {
+      u = rot({ x: size, y: 0 }, th);
+      v = rot({ x: 0, y: size * (0.55 + Math.random() * 0.35) }, th);
+    } else if (cond.key === "square") {
+      u = rot({ x: size, y: 0 }, th);
+      v = rot({ x: 0, y: size }, th);
+    } else if (cond.key === "rhom") {
+      const a = (55 + Math.random() * 50) * Math.PI / 180;
+      u = rot({ x: size, y: 0 }, th);
+      v = rot({ x: size * Math.cos(a), y: size * Math.sin(a) }, th);
+    } else {
+      // 평행사변형 계열 · 사다리꼴 계열
+      const a = (52 + Math.random() * 56) * Math.PI / 180;
+      const l2 = size * (0.6 + Math.random() * 0.5);
+      u = rot({ x: size, y: 0 }, th);
+      v = rot({ x: l2 * Math.cos(a), y: l2 * Math.sin(a) }, th);
+      // 사다리꼴은 한 쌍만 평행해야 하므로, 마주 보는 변의 길이를 일부러 다르게 만든다
+      if (cond.key === "trap" || cond.key === "trapNotPara") {
+        k = Math.random() < 0.5 ? 1.45 + Math.random() * 0.4 : 0.45 + Math.random() * 0.25;
+      }
+      if (cond.key === "paraNotRhom" && Math.abs(len(u) - len(v)) < size * 0.18) continue;
+    }
+
+    // 사각형의 무게중심이 코트 가운데쯤 오도록 B를 잡는다
+    const D0 = add(u, mul(v, k));
+    const g = mul(add(add(u, v), D0), 1 / 4);
+    const B = mul(g, -1);
+    const A = add(B, u), C = add(B, v), D = add(B, D0);
+
+    if (!convex(A, B, C, D)) continue;
+    if (!cond.test(classify(A, B, C, D))) continue;
+    const fits = (p) => Math.abs(p.x) < c.hx - 0.05 && Math.abs(p.y) < c.hy - 0.05;
+    if (![A, B, C, D].every(fits)) continue;
+
+    // 오답 후보 3개 — 조건을 실제로 만족하지 않는 자리만 고른다
+    const cands = [D];
+    const far = (p) => cands.every((q) => dist2(q, p) > (size * 0.5) ** 2)
+      && [A, B, C].every((q) => dist2(q, p) > (size * 0.42) ** 2);
+    const ok = (p) => fits(p) && convex(A, B, C, p) && !cond.test(classify(A, B, C, p)) && far(p);
+
+    // 가장 헷갈리는 오답 하나를 먼저 심는다 — 평행은 맞지만 길이가 달라 조건에서 벗어나는 자리
+    for (const t of [1.55, 0.55, 1.35, 0.7]) {
+      const p = add(A, mul(v, t));
+      if (ok(p)) { cands.push(p); break; }
+    }
+    let guard = 0;
+    while (cands.length < 4 && guard++ < 900) {
+      const a2 = Math.random() * Math.PI * 2;
+      const d = size * (0.42 + Math.random() * 0.85);
+      const p = { x: D.x + Math.cos(a2) * d, y: D.y + Math.sin(a2) * d };
+      if (ok(p)) cands.push(p);
+    }
+    if (cands.length < 4) continue;
+
+    const order = cands.map((p, i) => ({ p, i })).sort(() => Math.random() - 0.5);
+    return {
+      cond, A, B, C,
+      spots: order.map((o) => o.p),
+      answerIdx: order.findIndex((o) => o.i === 0),
+    };
+  }
+  // 여기까지 오는 일은 사실상 없지만, 못 뽑으면 가장 단순한 직사각형 문제로 대체한다
+  const u = { x: 0.30, y: 0 }, v = { x: 0, y: 0.20 };
+  const B = { x: -0.15, y: -0.10 };
+  const A = add(B, u), C = add(B, v), D = add(B, add(u, v));
+  return {
+    cond: CONDS[1][1], A, B, C,
+    spots: [D, { x: D.x + 0.26, y: D.y }, { x: D.x, y: D.y + 0.26 }, { x: D.x - 0.26, y: D.y + 0.2 }],
+    answerIdx: 0,
+  };
 }
 
 const poseTracker = new PoseTracker();
@@ -220,11 +311,12 @@ const holdFill = document.getElementById("holdFill");
 const startGate = new StartGate(mode, holdFill);
 
 let autoDiff, count, combo, maxCombo, playEndAt;
-let round, slots, phase, chosen, roundAt, resolving, flashUntil = 0;
-let pieceDeg, snap = null;   // snap: 조각이 빈틈으로 빨려 들어가는 연출
-let held = null;             // 손에 들고 있는 조각 { shape, x, y, color }
-let turnLatch = true;        // 45°씩 '딸깍' 한 칸만 돌도록 하는 걸쇠
-let gapX = 0, gapDir = 1;    // 수비 벽의 빈틈이 좌우로 오간다
+let round, roundAt, resolving, flashUntil = 0;
+let hoverIdx = -1;   // 손이 올라가 있는 후보 자리
+let dwell = 0;       // 그 자리에 머문 시간(ms) — 스치기만 해도 판정되지 않게 한다
+const DWELL_MS = 380;
+let won = null;      // 대형 완성 연출 { start }
+let netWave = 0;
 let popups = [], bigPopups = [], confetti = [], sparks = [];
 const shake = new ScreenShake();
 const mascot = new Mascot();
@@ -238,27 +330,15 @@ let cursors = [];
 let lastFrameAt = performance.now();
 
 function topBand() { return hudBand(dims); }
-function pieceR() { return fluidPx(dims, 70, { min: 50, max: 100 }); }
-function blockY() { return dims.h * 0.30; }
-
-function layoutPieces() {
-  const { w, h } = dims;
-  const R = pieceR();
-  slots = round.pieces.map((s, i) => ({
-    shape: s, idx: i,
-    x: w * (0.20 + 0.30 * i),
-    y: h * 0.62,
-    color: LANE_COLORS[i % LANE_COLORS.length],
-    R,
-  }));
-}
+function playerR() { return fluidPx(dims, 30, { min: 22, max: 44 }); }
+function spotR() { return fluidPx(dims, 34, { min: 25, max: 50 }); }
+function goalPos() { const c = court(); return { x: c.x1 - playerR() * 1.6, y: c.y0 + playerR() * 1.3 }; }
 
 function newRound() {
   round = genRound(autoDiff.level);
-  phase = "pick"; chosen = null; pieceDeg = 0; snap = null; held = null; turnLatch = true;
-  gapX = dims.w / 2; gapDir = Math.random() < 0.5 ? -1 : 1;
-  if (typeof turnRow !== "undefined" && turnRow) turnRow.style.display = "none";
-  layoutPieces();
+  hoverIdx = -1;
+  dwell = 0;
+  won = null;
   resolving = false;
   roundAt = performance.now();
 }
@@ -311,27 +391,34 @@ function beginPlay() {
   });
 }
 
+// 대형이 완성되면 네 번째 친구가 서고, 변이 하나씩 이어지고, 공이 사각형을 한 바퀴 돌아 골대로 간다
 function succeed() {
   if (resolving) return;
   resolving = true;
-  snap = { start: performance.now() };
+  won = { start: performance.now() };
   count++; combo++;
-  mascot.cheer();
   fever.hit(combo);
   if (fever.on) feverBonus += 2;
-  spawnGrade(grades, dims.w / 2, dims.h * 0.52, combo);
   if (combo > maxCombo) { maxCombo = combo; comboShot.capture(canvas); }
   autoDiff.reportCorrect();
   autoRec.trigger();
-  shake.trigger(8, 180);
-  spawnSparkles(sparks, dims.w / 2, blockY(), 26, ["#fff", CUTE.sun, CUTE.green]);
-  spawnConfetti(confetti, dims.w / 2, blockY(), 40);
-  spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.44, `🤾 침투 성공! ${count}개`, CUTE.sun);
-  if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
-  setTimeout(() => { if (state === "playing") newRound(); }, 700);
+  spawnSparkles(sparks, toScreen(round.spots[round.answerIdx]).x, toScreen(round.spots[round.answerIdx]).y, 16, ["#fff", CUTE.sun]);
+  if (!isMuted()) sound.pop();
+
+  setTimeout(() => {
+    if (state !== "playing") return;
+    mascot.cheer();
+    spawnGrade(grades, dims.w / 2, dims.h * 0.30, combo);
+    netWave = performance.now();
+    shake.trigger(8, 190);
+    spawnConfetti(confetti, goalPos().x, goalPos().y, 40);
+    spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.82, `🤾 대형 완성! ${count}개`, CUTE.sun);
+    if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
+  }, 1050);
+  setTimeout(() => { if (state === "playing") newRound(); }, 1550);
 }
 
-function fail(x, y, msg) {
+function fail(idx) {
   if (resolving) return;
   resolving = true;
   combo = 0;
@@ -340,9 +427,9 @@ function fail(x, y, msg) {
   autoDiff.reportWrong();
   shake.trigger(4, 150);
   flashUntil = performance.now() + 450;
-  const ans = slots.find((s) => s.shape.key === round.answerKey);
-  if (ans) reveal.show({ x: ans.x, y: ans.y, r: ans.R * 1.2, label: ans.shape.name });
-  spawnPopup(popups, x, y, msg, CUTE.red);
+  reveal.show({ idx: round.answerIdx, label: round.cond.text });
+  const p = toScreen(round.spots[idx]);
+  spawnPopup(popups, p.x, p.y - spotR(), `${round.cond.text}이 안 돼요`, CUTE.red);
   if (!isMuted()) sound.fizzle();
   setTimeout(() => { if (state === "playing") newRound(); }, 1400);
 }
@@ -369,10 +456,10 @@ function endGame() {
   }
   document.getElementById("savePhotoBtn").onclick = async () => {
     const blob = await shot.toBlob((c, w, h) => drawPhotoOverlay(c, w, h, { title: TITLE, record: count + RECORD_SUFFIX, medal }));
-    downloadBlob(blob, `수학체육올림픽_사각형패스_${formatFileTimestamp()}.png`);
+    downloadBlob(blob, `수학체육올림픽_사각형대형_${formatFileTimestamp()}.png`);
   };
   document.getElementById("saveVideoBtn").onclick = () => {
-    if (recordedBlob) downloadBlob(recordedBlob, `수학체육올림픽_사각형패스_${formatFileTimestamp()}.${recorder.extension}`);
+    if (recordedBlob) downloadBlob(recordedBlob, `수학체육올림픽_사각형대형_${formatFileTimestamp()}.${recorder.extension}`);
   };
   showResult({
     panel: document.getElementById("resultPanel"),
@@ -403,97 +490,167 @@ document.getElementById("raisePanel").addEventListener("click", () => {
   if (state === "raise" && mode !== "motion") goReady();
 });
 
-// -------------------- 사각형 그리기 --------------------
-// 각도·길이를 숫자로 적어주지 않고, 같은 길이 변의 눈금과 직각 표시만으로 판단하게 한다.
-function drawQuad(ctx, shape, cx, cy, R, rotDeg, fill, opts = {}) {
-  const rot = (rotDeg * Math.PI) / 180;
-  const p = shape.pts.map(([x, y]) => ({
-    x: cx + (x * Math.cos(rot) - y * Math.sin(rot)) * R,
-    y: cy + (x * Math.sin(rot) + y * Math.cos(rot)) * R,
-  }));
-  const lw = Math.max(3, R * 0.1);
+// -------------------- 그리기 --------------------
+
+function drawCourt(ctx) {
+  const c = court();
   ctx.save();
+  const grad = ctx.createLinearGradient(0, c.y0, 0, c.y1);
+  grad.addColorStop(0, "rgba(64,180,110,0.18)");
+  grad.addColorStop(1, "rgba(20,120,70,0.32)");
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.roundRect(c.x0, c.y0, c.x1 - c.x0, c.y1 - c.y0, fluidPx(dims, 22, { min: 15, max: 32 }));
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.4)";
+  ctx.lineWidth = fluidPx(dims, 4, { min: 3, max: 6 });
+  ctx.stroke();
+  ctx.setLineDash([12, 11]);
+  ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(c.x0, c.cy); ctx.lineTo(c.x1, c.cy); ctx.stroke();
+  ctx.restore();
+}
+
+// 골대 — 대형이 완성되면 공이 이리로 날아온다
+function drawGoal(ctx) {
+  const g = goalPos();
+  const R = playerR();
+  const gw = R * 2.6, gh = R * 1.7;
+  const since = performance.now() - netWave;
+  const wave = netWave && since < 900 ? (1 - since / 900) * R * 0.5 : 0;
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,255,255,0.75)";
+  ctx.lineWidth = Math.max(1.5, R * 0.06);
+  for (let i = 0; i <= 5; i++) {
+    const x = g.x - gw / 2 + (gw * i) / 5;
+    const sag = wave * Math.sin((Math.PI * i) / 5) * Math.sin(since / 55);
+    ctx.beginPath();
+    ctx.moveTo(x, g.y - gh / 2);
+    ctx.quadraticCurveTo(x + sag, g.y, x, g.y + gh / 2);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = Math.max(4, R * 0.16);
   ctx.lineJoin = "round";
-  if (opts.ghost) {
+  ctx.beginPath();
+  ctx.moveTo(g.x - gw / 2, g.y + gh / 2);
+  ctx.lineTo(g.x - gw / 2, g.y - gh / 2);
+  ctx.lineTo(g.x + gw / 2, g.y - gh / 2);
+  ctx.lineTo(g.x + gw / 2, g.y + gh / 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// 사각형 대형. edges(0~1)만큼만 변을 그려 "하나씩 이어진다"를 보여준다.
+function drawFormation(ctx, quad, opts = {}) {
+  const p = quad.map(toScreen);
+  const lw = fluidPx(dims, 7, { min: 5, max: 11 });
+  const edges = opts.edges === undefined ? 1 : opts.edges;
+
+  ctx.save();
+  if (opts.fill) {
     ctx.beginPath();
     p.forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y)));
     ctx.closePath();
-    ctx.setLineDash([R * 0.16, R * 0.12]);
-    ctx.strokeStyle = fill;
-    ctx.lineWidth = lw * 0.8;
-    ctx.stroke();
-    ctx.restore();
-    return p;
+    ctx.fillStyle = opts.fill;
+    ctx.fill();
   }
-  ctx.beginPath();
-  p.forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y + lw) : ctx.lineTo(q.x, q.y + lw)));
-  ctx.closePath();
-  ctx.fillStyle = "rgba(29,43,77,0.35)";
-  ctx.fill();
+  ctx.strokeStyle = opts.stroke || CUTE.ink;
+  ctx.lineWidth = opts.lineWidth || lw;
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  if (opts.dash) ctx.setLineDash([lw * 2, lw * 1.6]);
+  for (let i = 0; i < 4; i++) {
+    const k = Math.min(1, Math.max(0, edges * 4 - i));
+    if (k <= 0) break;
+    const a = p[i], b = p[(i + 1) % 4];
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k);
+    ctx.stroke();
+  }
+  ctx.restore();
+  return p;
+}
 
-  ctx.beginPath();
-  p.forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y)));
-  ctx.closePath();
-  ctx.fillStyle = fill;
-  ctx.fill();
-  ctx.strokeStyle = CUTE.ink;
-  ctx.lineWidth = lw;
-  ctx.stroke();
+// 평행 표시(≫)·같은 길이 눈금(=)·직각 표시(⌐).
+// 대형이 완성됐을 때만 띄워서 "왜 이게 평행사변형인지"가 눈에 보이게 한다.
+function drawMarks(ctx, quad) {
+  const p = quad.map(toScreen);
+  const cls = classify(quad[0], quad[1], quad[2], quad[3]);
+  const S = fluidPx(dims, 16, { min: 11, max: 24 });
+  const sideVec = (i) => sub(p[(i + 1) % 4], p[i]);
+  const midOf = (i) => mul(add(p[i], p[(i + 1) % 4]), 0.5);
 
-  // 같은 길이의 변 눈금
-  const len = shape.pts.map((_, i) => {
-    const a = shape.pts[i], b = shape.pts[(i + 1) % 4];
-    return Math.hypot(a[0] - b[0], a[1] - b[1]);
-  });
-  const groups = [];
-  len.forEach((s, i) => {
-    const g = groups.find((gr) => Math.abs(gr.len - s) < 0.02);
-    if (g) g.idx.push(i); else groups.push({ len: s, idx: [i] });
-  });
+  ctx.save();
   ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = Math.max(2, R * 0.055);
-  ctx.lineCap = "round";
-  groups.forEach((g, gi) => {
-    if (g.idx.length < 2) return;
-    for (const si of g.idx) {
-      const a = p[si], b = p[(si + 1) % 4];
-      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-      const ux = b.x - a.x, uy = b.y - a.y;
-      const L = Math.hypot(ux, uy) || 1;
-      const nx = -uy / L, ny = ux / L;
-      const ticks = gi + 1;
-      for (let t = 0; t < ticks; t++) {
-        const off = (t - (ticks - 1) / 2) * R * 0.12;
-        const px = mx + (ux / L) * off, py = my + (uy / L) * off;
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.lineWidth = Math.max(2.5, S * 0.22);
+
+  // 평행한 변 쌍에 화살촉 (첫 쌍 1개, 둘째 쌍 2개)
+  const pairs = [];
+  if (cls.p1) pairs.push([0, 2]);
+  if (cls.p2) pairs.push([1, 3]);
+  pairs.forEach((pair, gi) => {
+    for (const i of pair) {
+      const d = sideVec(i);
+      const L = len(d) || 1;
+      const ux = d.x / L, uy = d.y / L;
+      const m = midOf(i);
+      for (let n = 0; n <= gi; n++) {
+        const off = (n - gi / 2) * S * 0.55;
+        const bx = m.x + ux * off, by = m.y + uy * off;
         ctx.beginPath();
-        ctx.moveTo(px - nx * R * 0.085, py - ny * R * 0.085);
-        ctx.lineTo(px + nx * R * 0.085, py + ny * R * 0.085);
+        ctx.moveTo(bx - ux * S * 0.32 - uy * S * 0.32, by - uy * S * 0.32 + ux * S * 0.32);
+        ctx.lineTo(bx, by);
+        ctx.lineTo(bx - ux * S * 0.32 + uy * S * 0.32, by - uy * S * 0.32 - ux * S * 0.32);
         ctx.stroke();
       }
     }
   });
 
+  // 길이가 같은 변에 눈금
+  const groups = [];
+  cls.L.forEach((L, i) => {
+    const g = groups.find((gr) => Math.abs(gr.L - L) < 0.07 * Math.max(gr.L, L));
+    if (g) g.idx.push(i); else groups.push({ L, idx: [i] });
+  });
+  groups.forEach((g) => {
+    if (g.idx.length < 2) return;
+    for (const i of g.idx) {
+      const d = sideVec(i);
+      const L = len(d) || 1;
+      const ux = d.x / L, uy = d.y / L;
+      const m = midOf(i);
+      ctx.beginPath();
+      ctx.moveTo(m.x - uy * S * 0.38, m.y + ux * S * 0.38);
+      ctx.lineTo(m.x + uy * S * 0.38, m.y - ux * S * 0.38);
+      ctx.stroke();
+    }
+  });
+
   // 직각 표시
-  for (let i = 0; i < 4; i++) {
-    const v = shape.pts[i], a = shape.pts[(i + 3) % 4], b = shape.pts[(i + 1) % 4];
-    const u1 = [a[0] - v[0], a[1] - v[1]], u2 = [b[0] - v[0], b[1] - v[1]];
-    const n1 = Math.hypot(u1[0], u1[1]), n2 = Math.hypot(u2[0], u2[1]);
-    const cos = (u1[0] * u2[0] + u1[1] * u2[1]) / (n1 * n2);
-    if (Math.abs(cos) > 0.03) continue;
-    const V = p[i], A = p[(i + 3) % 4], B = p[(i + 1) % 4];
-    const d1 = { x: (A.x - V.x) / Math.hypot(A.x - V.x, A.y - V.y), y: (A.y - V.y) / Math.hypot(A.x - V.x, A.y - V.y) };
-    const d2 = { x: (B.x - V.x) / Math.hypot(B.x - V.x, B.y - V.y), y: (B.y - V.y) / Math.hypot(B.x - V.x, B.y - V.y) };
-    const s = R * 0.2;
-    ctx.beginPath();
-    ctx.moveTo(V.x + d1.x * s, V.y + d1.y * s);
-    ctx.lineTo(V.x + d1.x * s + d2.x * s, V.y + d1.y * s + d2.y * s);
-    ctx.lineTo(V.x + d2.x * s, V.y + d2.y * s);
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = Math.max(2, R * 0.05);
-    ctx.stroke();
+  if (cls.rect) {
+    for (let i = 0; i < 4; i++) {
+      const v0 = p[i], a = p[(i + 3) % 4], b = p[(i + 1) % 4];
+      const d1 = sub(a, v0), d2 = sub(b, v0);
+      const n1 = len(d1) || 1, n2 = len(d2) || 1;
+      const q = S * 0.8;
+      ctx.beginPath();
+      ctx.moveTo(v0.x + (d1.x / n1) * q, v0.y + (d1.y / n1) * q);
+      ctx.lineTo(v0.x + (d1.x / n1) * q + (d2.x / n2) * q, v0.y + (d1.y / n1) * q + (d2.y / n2) * q);
+      ctx.lineTo(v0.x + (d2.x / n2) * q, v0.y + (d2.y / n2) * q);
+      ctx.stroke();
+    }
   }
   ctx.restore();
-  return p;
+}
+
+function drawPlayer(ctx, pt, color, moodName, phase) {
+  const R = playerR();
+  const s = toScreen(pt);
+  const by = bob(1.4, R * 0.09, phase);
+  drawSticker(ctx, s.x, s.y + by, R, color, { lineWidth: Math.max(3, R * 0.15) });
+  drawMood(ctx, s.x, s.y + by, R * 0.88, moodName);
 }
 
 function loop(tsMs) {
@@ -527,20 +684,9 @@ function loop(tsMs) {
 
   if (state === "playing") drawFeverFrame(ctx, dims, fever, fluidPx);
 
-  for (const c of cursors) drawGloveCursor(ctx, c.x, c.y, fluidPx(dims, 44, { min: 32, max: 62 }), { active: phase === "turn" });
+  for (const c of cursors) drawGloveCursor(ctx, c.x, c.y, fluidPx(dims, 44, { min: 32, max: 62 }), { active: hoverIdx >= 0 });
   ctx.restore();
 }
-
-// 45°씩 한 칸만 돈다 — 지나쳤다 되돌아오길 반복하던 문제를 없앤다
-function rotatePiece(dir) {
-  if (phase !== "turn" || resolving) return;
-  pieceDeg = ((pieceDeg + dir * 45) % 360 + 360) % 360;
-  if (!isMuted()) sound.click();
-}
-
-const turnRow = document.getElementById("turnRow");
-document.getElementById("turnL").addEventListener("click", () => rotatePiece(-1));
-document.getElementById("turnR").addEventListener("click", () => rotatePiece(1));
 
 function goReady() {
   state = "ready";
@@ -556,69 +702,10 @@ function goReady() {
 
 function drawTopPanel(ctx, remain) {
   drawHudPanel(ctx, dims, fluidPx, {
-    left: phase === "pick" ? "① 조건에 맞는 조각 잡기" : "② 몸을 돌려 각도 맞추기",
+    left: "네 번째 자리를 짚어 대형 완성!",
     right: `🔥 ${combo}   🏅 ${count}개   ⏱ ${Math.ceil(remain / 1000)}초`,
-    headline: phase === "pick" ? round.cond.text : `${round.dir < 0 ? "왼쪽" : "오른쪽"}으로 ${round.turn}° 돌리기!`,
+    headline: `${round.cond.text} 대형을 만들어요!`,
   });
-}
-
-// 수비 블록 — 가운데 빈틈으로만 패스가 들어간다.
-// 밋밋한 회색 띠 대신 통통한 블록을 줄지어 쌓고, 가운데 블록에는 찡그린 표정을 붙였다.
-function drawBlockWall(ctx, gapW) {
-  const { w } = dims;
-  const y = blockY();
-  const th = fluidPx(dims, 34, { min: 26, max: 50 });
-  const sides = [
-    { x0: 0, x1: gapX - gapW / 2 },
-    { x0: gapX + gapW / 2, x1: w },
-  ];
-  for (const s of sides) {
-    const span = s.x1 - s.x0;
-    if (span <= 0) continue;
-    const n = Math.max(2, Math.round(span / (th * 1.5)));
-    const bw = span / n;
-    for (let i = 0; i < n; i++) {
-      const cx = s.x0 + bw * (i + 0.5);
-      drawStickerRect(ctx, cx, y, bw * 0.94, th, th * 0.28, i % 2 ? CUTE.blueDark : CUTE.blue, {
-        lineWidth: Math.max(3, th * 0.13), drop: Math.max(3, th * 0.12),
-      });
-    }
-    // 빈틈에 가장 가까운 블록만 표정을 지어 "여기를 막고 있다"가 읽히게 한다
-    const guard = s.x0 === 0 ? s.x1 - bw * 0.5 : s.x0 + bw * 0.5;
-    drawMood(ctx, guard, y, th * 0.42, "sad");
-  }
-}
-
-// 몸을 얼마나 돌렸는지 보여주는 회전 다이얼
-function drawTurnDial(ctx, cx, cy, R, targetDeg, curDeg, ok) {
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(29,43,77,0.55)"; ctx.fill();
-  ctx.strokeStyle = "rgba(255,255,255,0.6)"; ctx.lineWidth = Math.max(2, R * 0.05); ctx.stroke();
-
-  // 45° 눈금
-  ctx.strokeStyle = "rgba(255,255,255,0.5)";
-  ctx.lineWidth = Math.max(1.5, R * 0.03);
-  for (let d = 0; d < 360; d += 45) {
-    const a = (d - 90) * Math.PI / 180;
-    ctx.beginPath();
-    ctx.moveTo(Math.cos(a) * R * 0.82, Math.sin(a) * R * 0.82);
-    ctx.lineTo(Math.cos(a) * R, Math.sin(a) * R);
-    ctx.stroke();
-  }
-  // 목표
-  const ta = (targetDeg - 90) * Math.PI / 180;
-  ctx.strokeStyle = ok ? CUTE.green : CUTE.sun;
-  ctx.lineWidth = Math.max(4, R * 0.11);
-  ctx.lineCap = "round";
-  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(ta) * R * 0.92, Math.sin(ta) * R * 0.92); ctx.stroke();
-  // 현재
-  const ca = (curDeg - 90) * Math.PI / 180;
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = Math.max(3, R * 0.07);
-  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(ca) * R * 0.78, Math.sin(ca) * R * 0.78); ctx.stroke();
-  ctx.restore();
 }
 
 function stepGame() {
@@ -629,97 +716,150 @@ function stepGame() {
   const remain = Math.max(0, playEndAt - now);
   if (remain <= 0) { endGame(); return; }
   const armed = now - roundAt > 550;
-  const R = pieceR();
-  const gapW = R * 2.6;
+  const SR = spotR();
 
-  // 빈틈이 가만히 있으면 긴장감이 없다 — 벽이 좌우로 천천히 오간다
+  // 넉넉한 범위에서 "손이 올라간 자리"를 먼저 잡아 대형을 미리 보여주고,
+  // 가운데에 잠깐(0.38초) 머물러야 실제로 짚은 것으로 친다.
+  // 손이 스치기만 해도 판정되면 미리보기를 볼 틈이 없고, 모션 모드에서는 억울하게 틀린다.
+  const prevHover = hoverIdx;
+  hoverIdx = -1;
   if (!resolving) {
-    gapX += gapDir * w * (0.028 + 0.018 * autoDiff.level) * dt;
-    if (gapX < w * 0.26) { gapX = w * 0.26; gapDir = 1; }
-    if (gapX > w * 0.74) { gapX = w * 0.74; gapDir = -1; }
-  }
-
-  const target = ((round.dir > 0 ? round.turn : 360 - round.turn) % 360 + 360) % 360;
-  const angleOk = Math.abs(((pieceDeg - target + 540) % 360) - 180) <= 8;
-
-  if (phase === "pick" && armed && !resolving) {
-    let best = null, bestD = Infinity;
+    let bestD = Infinity;
     for (const c of cursors) {
-      for (const s of slots) {
+      round.spots.forEach((sp, i) => {
+        const s = toScreen(sp);
         const d = Math.hypot(c.x - s.x, c.y - s.y);
-        if (d < s.R * 1.1 && d < bestD) { bestD = d; best = s; }
-      }
+        if (d < SR * 2.2 && d < bestD) { bestD = d; hoverIdx = i; }
+      });
     }
-    if (best) {
-      if (best.shape.key === round.answerKey) {
-        chosen = best;
-        held = { shape: best.shape, color: best.color, x: best.x, y: best.y };
-        phase = "turn"; pieceDeg = 0; turnLatch = true;
-        roundAt = now;
-        if (mode !== "motion") turnRow.style.display = "flex";
-        spawnSparkles(sparks, best.x, best.y, 14, ["#fff", CUTE.sun]);
-        spawnPopup(popups, best.x, best.y - best.R, "잡았다! 각도를 맞춰 빈틈으로", CUTE.green);
-        if (!isMuted()) sound.pop();
-      } else {
-        fail(best.x, best.y - best.R, "조건을 다시 봐요!");
-        return;
-      }
-    }
-  } else if (phase === "turn" && !resolving) {
-    // 조각은 손을 따라오고, 회전은 45°씩 딱 한 칸만 '딸깍' 돈다.
-    // 예전에는 몸 기울기로 각속도를 조절해서, 원하는 각도에 딱 멈추기가 무척 어려웠다.
-    if (cursors.length) { held.x = cursors[0].x; held.y = cursors[0].y; }
+    if (hoverIdx !== prevHover) dwell = 0;
+    if (hoverIdx >= 0 && bestD < SR * 0.95) dwell += dt * 1000;
+    else dwell = Math.max(0, dwell - dt * 900);
 
-    if (mode === "motion") {
-      const turn = body.torsoTurn();
-      if (Math.abs(turn) < 0.25) turnLatch = true;
-      else if (turnLatch) { rotatePiece(turn > 0 ? 1 : -1); turnLatch = false; }
+    if (armed && hoverIdx >= 0 && dwell >= DWELL_MS) {
+      if (hoverIdx === round.answerIdx) succeed(); else fail(hoverIdx);
+      return;
     }
-
-    // 각도가 맞은 채로 빈틈까지 가져가면 자석처럼 빨려 들어간다
-    const inGap = Math.abs(held.x - gapX) < gapW * 0.6 && Math.abs(held.y - blockY()) < R * 1.5;
-    if (armed && angleOk && inGap) { succeed(); return; }
   }
 
-  drawBlockWall(ctx, gapW);
+  drawCourt(ctx);
+  drawGoal(ctx);
   drawTopPanel(ctx, remain);
 
-  if (phase === "pick") {
-    for (const s of slots) {
-      const by = bob(1.5, s.R * 0.05, s.idx);
-      drawQuad(ctx, s.shape, s.x, s.y + by, s.R, 0, s.color);
-      drawMood(ctx, s.x, s.y + by, s.R * 0.38, "idle");
+  const base = [round.A, round.B, round.C];
+
+  if (!won) {
+    // 세 친구를 잇는 선 — "여기까지는 정해져 있다"를 보여준다
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.55)";
+    ctx.lineWidth = fluidPx(dims, 5, { min: 4, max: 8 });
+    ctx.lineCap = "round";
+    const bp = base.map(toScreen);
+    ctx.beginPath();
+    ctx.moveTo(bp[0].x, bp[0].y);
+    ctx.lineTo(bp[1].x, bp[1].y);
+    ctx.lineTo(bp[2].x, bp[2].y);
+    ctx.stroke();
+    ctx.restore();
+
+    // 손을 올린 자리로 대형을 미리 그려 준다 — 짚기 전에 모양을 확인할 수 있다
+    if (hoverIdx >= 0) {
+      const quad = [round.A, round.B, round.C, round.spots[hoverIdx]];
+      drawFormation(ctx, quad, { fill: "rgba(255,255,255,0.22)", stroke: "rgba(255,255,255,0.85)", dash: true });
     }
-    if (reveal.on) drawAnswerRing(ctx, dims, fluidPx, reveal.data.x, reveal.data.y, reveal.data.r, reveal.data.label);
-    drawChunkyText(ctx, "조건에 맞는 사각형 조각을 손으로 잡아요!", w / 2, h * 0.92,
-      fluidPx(dims, 16, { min: 12, max: 21 }), "#ffffff",
-      { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) });
+
+    // 후보 자리 — 번갈아 반짝인다
+    round.spots.forEach((sp, i) => {
+      const s = toScreen(sp);
+      const twinkle = 0.45 + Math.abs(Math.sin(now / 520 + i * 1.3)) * 0.35;
+      const on = i === hoverIdx;
+      ctx.save();
+      ctx.globalAlpha = on ? 1 : twinkle;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, SR * (on ? 1.12 : 1), 0, Math.PI * 2);
+      ctx.fillStyle = on ? "rgba(255,207,63,0.35)" : "rgba(255,255,255,0.18)";
+      ctx.fill();
+      ctx.setLineDash([SR * 0.36, SR * 0.28]);
+      ctx.strokeStyle = on ? CUTE.sun : "#ffffff";
+      ctx.lineWidth = fluidPx(dims, 5, { min: 3.5, max: 8 });
+      ctx.stroke();
+      ctx.restore();
+      ctx.save();
+      ctx.globalAlpha = on ? 1 : 0.8;
+      ctx.font = `${SR * 1.05}px ${FONT}`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText("👣", s.x, s.y);
+      ctx.restore();
+
+      // 머문 만큼 링이 차오른다 — 다 차면 그 자리로 결정된다
+      if (on && dwell > 0) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, SR * 1.3, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, dwell / DWELL_MS));
+        ctx.strokeStyle = CUTE.sun;
+        ctx.lineWidth = fluidPx(dims, 7, { min: 5, max: 11 });
+        ctx.lineCap = "round";
+        ctx.stroke();
+        ctx.restore();
+      }
+    });
+
+    // 틀렸으면 정답 자리를 초록 링으로 짚어 준다
+    if (reveal.on) {
+      const s = toScreen(round.spots[reveal.data.idx]);
+      drawAnswerRing(ctx, dims, fluidPx, s.x, s.y, SR * 1.25, reveal.data.label);
+    }
   } else {
-    // 빈틈에 목표 방향이 점선으로 떠 있어서, 어디까지 돌려야 하는지 눈으로 보인다
-    drawQuad(ctx, chosen.shape, gapX, blockY(), R, target, angleOk ? CUTE.green : "#ffffff", { ghost: true });
+    // 대형 완성 — 변이 하나씩 이어지고, 다 이어지면 성질 표시가 붙는다
+    const el = now - won.start;
+    const quad = [round.A, round.B, round.C, round.spots[round.answerIdx]];
+    const edges = Math.min(1, Math.max(0, (el - 200) / 420));
+    drawFormation(ctx, quad, { fill: "rgba(81,207,102,0.28)", stroke: CUTE.green, edges });
+    if (edges >= 1) drawMarks(ctx, quad);
+  }
 
-    let px = held.x, py = held.y;
-    if (snap) {
-      const t = Math.min(1, (now - snap.start) / 420);
-      const e = 1 - Math.pow(1 - t, 3);
-      px = held.x + (gapX - held.x) * e;
-      py = held.y + (blockY() - held.y) * e;
+  // 친구들
+  base.forEach((pt, i) => drawPlayer(ctx, pt, LANE_COLORS[i % LANE_COLORS.length], won ? "happy" : "idle", i));
+
+  if (won) {
+    const el = now - won.start;
+    const R = playerR();
+    const quad = [round.A, round.B, round.C, round.spots[round.answerIdx]];
+    const p = quad.map(toScreen);
+
+    // 네 번째 친구가 자리에 선다
+    const pop = Math.min(1, el / 200);
+    ctx.save();
+    ctx.translate(p[3].x, p[3].y);
+    ctx.scale(0.3 + pop * 0.7, 0.3 + pop * 0.7);
+    drawSticker(ctx, 0, 0, R, CUTE.orange, { lineWidth: Math.max(3, R * 0.15) });
+    drawMood(ctx, 0, 0, R * 0.88, "happy");
+    ctx.restore();
+
+    // 공이 사각형 변을 따라 한 바퀴 돈 뒤 골대로 날아간다
+    const br = fluidPx(dims, 20, { min: 15, max: 30 });
+    let bx = null, by = null;
+    if (el >= 640 && el < 1050) {
+      const t = (el - 640) / 410;
+      const seg = Math.min(3, Math.floor(t * 4));
+      const k = t * 4 - seg;
+      const a = p[seg], b = p[(seg + 1) % 4];
+      bx = a.x + (b.x - a.x) * k; by = a.y + (b.y - a.y) * k;
+    } else if (el >= 1050 && el < 1450) {
+      const t = (el - 1050) / 400;
+      const g = goalPos();
+      bx = p[0].x + (g.x - p[0].x) * t;
+      by = p[0].y + (g.y - p[0].y) * t - Math.sin(Math.PI * t) * h * 0.14;
     }
-    drawQuad(ctx, chosen.shape, px, py, R, pieceDeg, angleOk ? CUTE.green : chosen.color);
-    drawMood(ctx, px, py, R * 0.34, angleOk ? "happy" : "wow");
-
-    drawTurnDial(ctx, w * 0.9, h * 0.5, Math.min(w, h) * 0.09, target, pieceDeg, angleOk);
-
-    drawChunkyText(
-      ctx,
-      angleOk ? "좋아요! 빈틈으로 가져가요" : (mode === "motion" ? "몸을 좌우로 기울여 45°씩 돌려요" : "아래 ↺ ↻ 단추로 45°씩 돌려요"),
-      w / 2, h * 0.80, fluidPx(dims, 17, { min: 12, max: 22 }),
-      angleOk ? CUTE.green : "#ffffff",
-      { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) },
-    );
-    drawChunkyText(ctx, `${Math.round(pieceDeg)}°`, w * 0.9, h * 0.5 + Math.min(w, h) * 0.145,
-      fluidPx(dims, 22, { min: 16, max: 30 }), angleOk ? CUTE.green : CUTE.sun,
-      { outline: CUTE.ink, outlineWidth: fluidPx(dims, 6, { min: 4, max: 8 }) });
+    if (bx !== null) {
+      ctx.save();
+      ctx.translate(bx, by);
+      ctx.rotate(el / 90);
+      ctx.font = `${br * 2}px ${FONT}`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText("⚽", 0, 0);
+      ctx.restore();
+    }
   }
 
   if (now < flashUntil) {
@@ -735,6 +875,9 @@ function stepGame() {
   bigPopups = updateBigPopups(bigPopups, dt); drawBigPopups(ctx, bigPopups);
 
   drawVignette(ctx, w, h, 0.16);
+  drawChunkyText(ctx, won ? "대형 완성!" : "발자국 자리에 손을 올려 보고 짚어요!", w / 2, h * 0.965,
+    fluidPx(dims, 16, { min: 12, max: 21 }), won ? CUTE.green : "#ffffff",
+    { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) });
   drawTimeUrgency(ctx, dims, fluidPx, remain);
   drawLevelStars(ctx, dims, autoDiff.level, fluidPx);
 }
