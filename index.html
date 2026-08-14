@@ -3,7 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>수학 체육올림픽</title>
+<title>수학 체육올림픽 · 초등 4학년 2학기</title>
+<meta name="description" content="초등 4학년 2학기 수학 × 체육 융합. 온몸으로 즐기는 모션인식 수학 게임 6종목.">
+<!-- 아래 두 그림은 아직 없다. assets/에 파일만 넣으면 바로 동작한다(없어도 페이지는 정상). -->
+<link rel="icon" href="assets/favicon.png" type="image/png">
+<link rel="apple-touch-icon" href="assets/favicon.png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="수학 체육올림픽 · 초등 4학년 2학기">
+<meta property="og:description" content="온몸으로 즐기는 모션인식 수학 게임 6종목 — 동작 도전 &amp; 영역형 경쟁">
+<meta property="og:image" content="https://motion-math-olympics-4th.vercel.app/assets/og-image.png">
+<meta property="og:url" content="https://motion-math-olympics-4th.vercel.app/">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="css/jua.css">
 <link rel="stylesheet" href="css/style.css?v=4">
 </head>
@@ -73,7 +83,7 @@
 
 <script type="module">
 import { HighScore, InputMode, FileAudioLoop, showSoundHint } from "./js/engine.js?v=2";
-import { LANE_COLORS } from "./js/cute.js?v=4";
+import { CUTE } from "./js/cute.js?v=4";
 import { Coins } from "./js/party.js?v=1";
 
 document.getElementById("coinBadge").textContent = `🪙 ${Coins.get()}`;
@@ -92,6 +102,9 @@ const UNITS = [
   { id: "g6", emoji: "🤸‍♀️", title: "종목 6", sub: "다각형 · 매트 체조", name: "다각형 매트 체조", href: "games/u6-polygon.html", thumb: "assets/thumb6.png" },
 ];
 
+// 종목이 6개인데 LANE_COLORS는 5색이라 1번과 6번이 같은 색이 됐다. 6색을 따로 둔다.
+const CARD_COLORS = [CUTE.red, CUTE.blue, CUTE.green, CUTE.purple, CUTE.orange, CUTE.cyan];
+
 function goToGame(href) { bgm.stop(); location.href = href; }
 
 let goldCount = 0;
@@ -99,7 +112,7 @@ const grid = document.getElementById("grid");
 UNITS.forEach((u) => {
   const card = document.createElement("button");
   card.className = "card";
-  card.style.setProperty("--card-color", LANE_COLORS[UNITS.indexOf(u) % LANE_COLORS.length]);
+  card.style.setProperty("--card-color", CARD_COLORS[UNITS.indexOf(u)]);
   const best = HighScore.get(u.id);
   const isGold = !!(best && best.label && best.label.startsWith("🥇"));
   if (isGold) { goldCount++; card.classList.add("gold-clear"); }
