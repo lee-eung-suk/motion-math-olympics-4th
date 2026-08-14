@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>분수 패스 골든골 · 종목 1</title>
+<link rel="stylesheet" href="../css/jua.css">
+<link rel="stylesheet" href="../css/style.css?v=4">
+</head>
+<body>
+
+<div class="game-stage">
+  <video id="video" playsinline muted style="display:none"></video>
+  <canvas id="gameCanvas"></canvas>
+
+  <div class="hud">
+    <div class="rec" id="recIndicator" style="display:none"><span class="dot"></span>REC</div>
+    <button class="home-btn" id="homeBtn">🏠</button>
+  </div>
+
+  <div class="overlay-panel" id="loadingPanel">
+    <h2>🥅 분수 패스 골든골</h2>
+    <p id="loadingText">준비 중…</p>
+  </div>
+
+  <div class="overlay-panel" id="raisePanel" style="display:none">
+    <div class="raise-icon" id="raiseIcon">🙋</div>
+    <h2 id="raiseText">손을 들어 주세요!</h2>
+    <p class="small-note" id="raiseNote">카메라에서 2~3걸음 물러나 온몸이 보이게 서 주세요</p>
+    <div class="hold-bar"><div class="hold-fill" id="holdFill"></div></div>
+  </div>
+
+  <div class="overlay-panel ready-flash" id="readyPanel" style="display:none">
+    <h2>✋ 좋아요! 준비됐어요</h2>
+  </div>
+
+
+  <div class="overlay-panel rule-card" id="rulePanel" style="display:none">
+    <div class="rule-inner">
+      <div class="rule-emoji">🎮</div>
+      <div class="rule-title">종목</div>
+      <div class="rule-text">규칙</div>
+      <div class="rule-tag">READY?</div>
+    </div>
+  </div>
+
+  <div class="overlay-panel start-stamp" id="startStamp" style="display:none">
+    <div class="stamp-word">START!</div>
+  </div>
+
+  <div class="overlay-panel" id="countdownPanel" style="display:none">
+    <div class="countdown-num" id="countNum">3</div>
+  </div>
+
+  <div class="overlay-panel" id="resultPanel" style="display:none">
+    <h2 id="resultTitle">결과</h2>
+    <div class="medal" id="resultMedal">🥉</div>
+    <div class="record-ribbon" id="recordRibbon">🎉 NEW RECORD!</div>
+    <div class="result-stats">
+      <div class="stat-box"><div class="num" id="statCount">0골</div><div class="label">기록</div></div>
+      <div class="stat-box"><div class="num" id="statBest">0골</div><div class="label">최고 기록</div></div>
+      <div class="stat-box"><div class="num" id="statCombo">0</div><div class="label">최고 콤보</div></div>
+    </div>
+    <div class="coin-earn" id="coinEarn"></div>
+    <video class="preview" id="previewVideo" controls playsinline style="display:none"></video>
+    <div class="action-row">
+      <button class="ghost-btn" id="savePhotoBtn">📸 사진</button>
+      <button class="ghost-btn" id="saveVideoBtn" style="display:none">🎬 3초 영상</button>
+      <button class="big-btn" id="retryBtn">🔁 한 번 더</button>
+      <button class="ghost-btn" id="homeBtn2">🏠 종목 선택</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import {
+  HighScore, requestWakeLock, SoundKit, FileAudioLoop,
+  ClipRecorder, downloadBlob,
+  drawMirroredVideo, fitCanvasToScreen,
+  AutoDifficulty, levelFromUrl, medalFor,
+  scheduleAutoRecording, ComboShot, drawPhotoOverlay,
+  ScreenShake, spawnPopup, updatePopups, drawPopups,
+  spawnBigPopup, updateBigPopups, drawBigPopups,
+  InputMode, PointerInput, StartGate, drawFallbackBackground,
+  startCamera, formatFileTimestamp, fluidPx, showSoundHint,
+  drawVignette, spawnConfetti, updateConfetti, drawConfetti,
+} from "../js/engine.js?v=2";
+import {
+  CUTE, FONT, LANE_COLORS, bob, drawSticker, drawStickerRect, drawChunkyText,
+  spawnSparkles, updateSparkles, drawSparkles, makeDrifters, drawDrifters,
+  drawBunting, drawGloveCursor, drawLevelStars,
+} from "../js/cute.js?v=4";
+import { PoseTracker, BodyInput, drawSkeleton } from "../js/pose.js?v=1";
+import {
+  ensureFont, Coins, Mascot, drawMood, spawnGrade, updateGrades, drawGrades,
+  showRuleCard, showStartStamp, showResult, hudBand, drawHudPanel,
+  drawTimeUrgency, poseHint, drawPoseHint,
+} from "../js/party.js?v=1";
+requestWakeLock();
+
+const UNIT = "g1";
+const TITLE = "분수 패스 골든골";
+const RECORD_SUFFIX = "골";
+const MEDALS = { bronze: 4, silver: 7, gold: 10 };
+const mode = InputMode.get();
+const RULE = { emoji: "🥅", title: "분수 패스 골든골", rule: "수비를 피해 두 번 패스! 두 친구의 분수를 더하면 골대의 값이 되어야 골인이에요." };
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("gameCanvas");
+let dims = fitCanvasToScreen(canvas);
+let drifters = makeDrifters(12, dims.w, dims.h);
+window.addEventListener("resize", () => {
+  dims = fitCanvasToScreen(canvas);
+  drifters = makeDrifters(12, dims.w, dims.h);
+  if (state === "playing") layoutMates();
+});
+
+const sound = new SoundKit();
+const bgm = new FileAudioLoop("../assets/sounds/subbgm.mp3", 0.32);
+const isMuted = () => localStorage.getItem("smo_muted") === "1";
+
+document.getElementById("homeBtn").addEventListener("click", () => { bgm.stop(); location.href = "../index.html"; });
+document.getElementById("homeBtn2").addEventListener("click", () => { bgm.stop(); location.href = "../index.html"; });
+
+function randInt(min, max) { return min + Math.floor(Math.random() * (max - min + 1)); }
+function shuffle(arr) { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } return arr; }
+
+// -------------------- 분수 --------------------
+// 분모가 같은 분수만 다루므로(4학년 2학기 1단원) 분모를 통일해서 들고 다닌다.
+const F = {
+  make: (w, n, d) => ({ w, n, d }),
+  toImp: (f) => f.w * f.d + f.n,                 // 가분수의 분자
+  fromImp: (imp, d) => ({ w: Math.floor(imp / d), n: imp % d, d }),
+  eq: (a, b) => a.d === b.d && F.toImp(a) === F.toImp(b),
+  val: (f) => F.toImp(f) / f.d,
+};
+
+// 대분수/진분수를 캔버스에 그린다. 분수는 한 줄 글자로 쓰면 4학년에게 잘 안 읽혀서
+// 자연수 부분 + 분자/가로줄/분모를 실제 모양대로 쌓아 그린다.
+function drawFraction(ctx, f, cx, cy, size, color, opts = {}) {
+  const ol = opts.outline === undefined ? CUTE.ink : opts.outline;
+  const olw = opts.outlineWidth || Math.max(3, size * 0.22);
+  const small = size * 0.62;
+  const hasWhole = f.w > 0;
+  const hasFrac = f.n > 0;
+  const fracW = hasFrac ? small * 1.5 : 0;
+  const wholeW = hasWhole ? size * 0.66 : 0;
+  const gap = hasWhole && hasFrac ? size * 0.16 : 0;
+  const total = wholeW + gap + fracW;
+  let x = cx - total / 2;
+
+  if (hasWhole) {
+    drawChunkyText(ctx, String(f.w), x + wholeW / 2, cy, size, color, { outline: ol, outlineWidth: olw });
+    x += wholeW + gap;
+  }
+  if (hasFrac) {
+    const fx = x + fracW / 2;
+    drawChunkyText(ctx, String(f.n), fx, cy - small * 0.52, small, color, { outline: ol, outlineWidth: olw * 0.8 });
+    drawChunkyText(ctx, String(f.d), fx, cy + small * 0.55, small, color, { outline: ol, outlineWidth: olw * 0.8 });
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.strokeStyle = ol || color;
+    ctx.lineWidth = Math.max(3, small * 0.2);
+    ctx.beginPath(); ctx.moveTo(fx - fracW * 0.42, cy); ctx.lineTo(fx + fracW * 0.42, cy); ctx.stroke();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(2, small * 0.11);
+    ctx.beginPath(); ctx.moveTo(fx - fracW * 0.42, cy); ctx.lineTo(fx + fracW * 0.42, cy); ctx.stroke();
+    ctx.restore();
+  }
+  if (!hasWhole && !hasFrac) drawChunkyText(ctx, "0", cx, cy, size, color, { outline: ol, outlineWidth: olw });
+}
+
+// -------------------- 문제 만들기 --------------------
+// 목표 T를 만드는 두 동료 a, b(a+b=T)를 반드시 넣고, 나머지는 오개념 오답으로 채운다.
+function genRound(level) {
+  const d = level === 1 ? randInt(3, 6) : randInt(4, 9);
+  let a, b;
+  if (level === 1) {
+    // 분모가 같은 진분수의 덧셈 (합이 1을 넘지 않음)
+    const total = randInt(2, d);
+    const i = randInt(1, total - 1);
+    a = F.make(0, i, d); b = F.make(0, total - i, d);
+  } else if (level === 2) {
+    // 받아올림이 있는 합 · 대분수가 섞임 (합이 1보다 큼)
+    const impA = randInt(1, d * 2 - 1);
+    const impB = randInt(d - impA % d + 1, d * 2 - 1); // 분수 부분끼리 더하면 1을 넘도록
+    a = F.fromImp(impA, d); b = F.fromImp(Math.max(1, impB), d);
+  } else {
+    // 3단계: T의 분수 부분이 a의 분수 부분보다 작아, T−a를 구하려면 받아내림이 필요하다
+    a = F.fromImp(randInt(d + 2, d * 2 - 1), d);          // 1 ~ 2 사이 대분수
+    const bImp = randInt(d + 1, d * 3 - 1);
+    b = F.fromImp(bImp, d);
+    if ((a.n + b.n) % d === 0) b = F.fromImp(bImp + 1, d); // 딱 떨어지면 받아내림이 안 생긴다
+  }
+  const T = F.fromImp(F.toImp(a) + F.toImp(b), d);
+
+  // 오답: 아이들이 실제로 하는 실수를 흉내 낸다
+  const wrongPool = [
+    F.make(a.w, Math.max(1, (T.n - a.n + d) % d || 1), d),          // 자연수 부분을 빼먹음
+    F.fromImp(Math.max(1, F.toImp(T) - F.toImp(a) + d), d),          // 받아내림을 잘못함
+    F.fromImp(Math.max(1, F.toImp(T) - F.toImp(a) - 1), d),
+    F.fromImp(Math.max(1, F.toImp(a) + 1), d),
+    F.fromImp(Math.max(1, F.toImp(T) + F.toImp(a)), d),              // 빼야 할 것을 더함
+  ];
+  const mates = [a, b];
+  for (const wf of shuffle(wrongPool)) {
+    if (mates.length >= 5) break;
+    if (wf.n === 0 && wf.w === 0) continue;
+    if (mates.some((m) => F.eq(m, wf))) continue;
+    // 우연히 다른 정답 짝이 생기면 문제 자체는 여전히 옳지만, 헷갈림을 줄이려고 걸러낸다
+    mates.push(wf);
+  }
+  return { d, T, mates: shuffle(mates) };
+}
+
+// 남은 값(T - 고른 값)을 가진 동료가 코트에 있는지 — 있으면 첫 패스로 인정한다
+function partnerExists(round, picked) {
+  const rest = F.toImp(round.T) - F.toImp(picked);
+  if (rest <= 0) return null;
+  const restF = F.fromImp(rest, round.d);
+  return round.mates.some((m) => F.eq(m, restF)) ? restF : null;
+}
+
+const poseTracker = new PoseTracker();
+const body = new BodyInput(mode);
+let pointerInput = null;
+
+async function init() {
+  await ensureFont();
+  if (!isMuted()) bgm.play(showSoundHint);
+  if (mode === "motion") {
+    try {
+      await startCamera(video, { width: 640, height: 480 });
+      if (!isMuted()) bgm.play(showSoundHint);
+    } catch (e) {
+      document.getElementById("loadingText").textContent = "⚠️ 카메라를 찾을 수 없어요. 카메라 권한을 확인해주세요.";
+      return;
+    }
+    document.getElementById("loadingText").textContent = "온몸 인식 AI를 불러오는 중…";
+    await poseTracker.init();
+  } else {
+    pointerInput = new PointerInput(canvas);
+  }
+  document.getElementById("loadingPanel").style.display = "none";
+  document.getElementById("raiseIcon").textContent = mode === "motion" ? "🙋" : "👆";
+  document.getElementById("raiseText").textContent = mode === "motion" ? "손을 들어 주세요!" : "화면을 터치(클릭)하면 시작!";
+  document.getElementById("raiseNote").style.display = mode === "motion" ? "block" : "none";
+  document.getElementById("raisePanel").style.display = "flex";
+  state = "raise";
+  requestAnimationFrame(loop);
+}
+
+let state = "loading";
+const holdFill = document.getElementById("holdFill");
+const startGate = new StartGate(mode, holdFill);
+
+let autoDiff, count, combo, maxCombo, playEndAt;
+let round, mates, defenders, stage, need, roundAt, resolving, flashUntil = 0, passLine = null;
+let netWave = 0; // 골망이 출렁이기 시작한 시각
+let popups = [], bigPopups = [], confetti = [], sparks = [];
+const shake = new ScreenShake();
+const mascot = new Mascot();
+let grades = [];
+let recorder, comboShot, fallbackShot, autoRec, recordedBlob = null;
+const recIndicator = document.getElementById("recIndicator");
+let cursors = [];
+
+function topBand() { return hudBand(dims); }
+function mateR() { return fluidPx(dims, 46, { min: 34, max: 66 }); }
+function ballPos() { return { x: dims.w / 2, y: dims.h * 0.93 }; }
+
+function layoutMates() {
+  const { w, h } = dims;
+  const R = mateR();
+  const y0 = h * 0.34, y1 = h * 0.60;
+  const n = round.mates.length;
+  mates = round.mates.map((f, i) => {
+    // 가로로 고르게 흩어놓고 세로만 살짝 어긋나게 — 서로 겹쳐서 잘못 짚는 일이 없어야 한다
+    const t = (i + 0.5) / n;
+    return {
+      f, idx: i,
+      x: w * 0.10 + (w * 0.80) * t,
+      y: y0 + (y1 - y0) * (0.15 + 0.70 * ((i * 0.37 + 0.2) % 1)),
+      vx: (Math.random() < 0.5 ? -1 : 1) * (w * 0.012),
+      vy: (Math.random() < 0.5 ? -1 : 1) * (h * 0.010),
+      color: LANE_COLORS[i % LANE_COLORS.length],
+      taken: false,
+      R,
+    };
+  });
+  // 수비수 — 패스 길을 막았다 열었다 하며 "공간"을 만들어 준다
+  const dn = autoDiff.level === 1 ? 1 : autoDiff.level === 2 ? 2 : 3;
+  defenders = [];
+  for (let i = 0; i < dn; i++) {
+    defenders.push({
+      x: w * (0.2 + 0.6 * Math.random()),
+      y: h * (0.68 + 0.13 * (i / Math.max(1, dn - 1 || 1))),
+      vx: (Math.random() < 0.5 ? -1 : 1) * w * (0.055 + 0.02 * autoDiff.level),
+      r: R * 0.86,
+    });
+  }
+}
+
+function newRound() {
+  round = genRound(autoDiff.level);
+  stage = 0; need = null; passLine = null;
+  layoutMates();
+  resolving = false;
+  roundAt = performance.now();
+}
+
+function startCountdown() {
+  state = "countdown";
+  document.getElementById("countdownPanel").style.display = "flex";
+  const numEl = document.getElementById("countNum");
+  let n = 3;
+  numEl.textContent = n;
+  if (!isMuted()) sound.countBeep();
+  const iv = setInterval(() => {
+    n--;
+    if (n <= 0) {
+      clearInterval(iv);
+      document.getElementById("countdownPanel").style.display = "none";
+      if (!isMuted()) sound.go();
+      showStartStamp(document.getElementById("startStamp"));
+      beginPlay();
+    } else {
+      numEl.textContent = n;
+      if (!isMuted()) sound.countBeep();
+    }
+  }, 700);
+}
+
+function beginPlay() {
+  state = "playing";
+  const prev = HighScore.get(UNIT);
+  autoDiff = new AutoDifficulty(levelFromUrl(AutoDifficulty.startLevelFromHighScore(prev)));
+  count = 0; combo = 0; maxCombo = 0;
+  popups = []; bigPopups = []; confetti = []; sparks = [];
+  playEndAt = performance.now() + 60000;
+  newRound();
+
+  recorder = new ClipRecorder(canvas, sound, 24);
+  recorder.prepare();
+  comboShot = new ComboShot(canvas);
+  fallbackShot = new ComboShot(canvas);
+  autoRec = scheduleAutoRecording(recorder, {
+    onStartVisual: () => {
+      recIndicator.style.display = "flex";
+      setTimeout(() => { if (!comboShot.captured) fallbackShot.capture(canvas); }, 1500);
+    },
+    onEndVisual: () => { recIndicator.style.display = "none"; },
+    onDone: (blob) => { recordedBlob = blob; },
+    fallbackMs: 8000,
+  });
+}
+
+function goal(m) {
+  if (resolving) return;
+  resolving = true;
+  count++; combo++;
+  mascot.cheer();
+  spawnGrade(grades, dims.w / 2, dims.h * 0.52, combo);
+  if (combo > maxCombo) { maxCombo = combo; comboShot.capture(canvas); }
+  autoDiff.reportCorrect();
+  autoRec.trigger();
+  shake.trigger(8, 180);
+  netWave = performance.now();
+  spawnSparkles(sparks, m.x, m.y, 24, ["#fff", CUTE.sun, CUTE.green]);
+  spawnConfetti(confetti, dims.w / 2, dims.h * 0.2, 40);
+  spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.30, `⚽ 골인! ${count}골`, CUTE.sun);
+  if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
+  setTimeout(() => { if (state === "playing") newRound(); }, 850);
+}
+
+function fail(x, y, msg) {
+  if (resolving) return;
+  resolving = true;
+  combo = 0;
+  mascot.oops();
+  autoDiff.reportWrong();
+  shake.trigger(4, 150);
+  flashUntil = performance.now() + 450;
+  spawnPopup(popups, x, y - mateR(), msg, CUTE.red);
+  if (!isMuted()) sound.fizzle();
+  setTimeout(() => { if (state === "playing") newRound(); }, 800);
+}
+
+function endGame() {
+  state = "result";
+  const { medal, label } = medalFor(count, MEDALS);
+  const prev = HighScore.get(UNIT);
+  const best = Math.max(count, prev ? prev.count : 0);
+  const isNewRecord = count > 0 && (!prev || count > prev.count);
+  const earned = Coins.earn(medal, maxCombo);
+  Coins.add(earned);
+  if (!prev || count >= prev.count) {
+    HighScore.set(UNIT, { count, bestLevel: autoDiff.level, label: `${medal} ${count}${RECORD_SUFFIX}`, at: Date.now() });
+  }
+
+  const shot = comboShot.captured ? comboShot : fallbackShot;
+  const previewVideo = document.getElementById("previewVideo");
+  const saveVideoBtn = document.getElementById("saveVideoBtn");
+  if (recordedBlob) {
+    previewVideo.src = URL.createObjectURL(recordedBlob);
+    previewVideo.style.display = "block";
+    saveVideoBtn.style.display = "inline-block";
+  }
+  document.getElementById("savePhotoBtn").onclick = async () => {
+    const blob = await shot.toBlob((c, w, h) => drawPhotoOverlay(c, w, h, { title: TITLE, record: count + RECORD_SUFFIX, medal }));
+    downloadBlob(blob, `수학체육올림픽_분수패스_${formatFileTimestamp()}.png`);
+  };
+  document.getElementById("saveVideoBtn").onclick = () => {
+    if (recordedBlob) downloadBlob(recordedBlob, `수학체육올림픽_분수패스_${formatFileTimestamp()}.${recorder.extension}`);
+  };
+  showResult({
+    panel: document.getElementById("resultPanel"),
+    medalEl: document.getElementById("resultMedal"),
+    titleEl: document.getElementById("resultTitle"),
+    ribbonEl: document.getElementById("recordRibbon"),
+    coinEl: document.getElementById("coinEarn"),
+    medal, title: `${label}!`,
+    stats: [
+      { el: document.getElementById("statCount"), value: count, suffix: "골" },
+      { el: document.getElementById("statBest"), value: best, suffix: "골" },
+      { el: document.getElementById("statCombo"), value: maxCombo, prefix: "🔥" },
+    ],
+    newRecord: isNewRecord,
+    coins: earned,
+    sound, muted: isMuted(),
+  });
+}
+
+document.getElementById("retryBtn").addEventListener("click", () => {
+  document.getElementById("resultPanel").style.display = "none";
+  document.getElementById("raisePanel").style.display = "flex";
+  startGate.since = 0; startGate.ready = false; holdFill.style.width = "0%";
+  state = "raise";
+});
+
+document.getElementById("raisePanel").addEventListener("click", () => {
+  if (state === "raise" && mode !== "motion") goReady();
+});
+
+// 점과 선분 사이의 거리 — 패스 길에 수비수가 걸쳤는지 판정한다
+function distToSegment(p, a, b) {
+  const vx = b.x - a.x, vy = b.y - a.y;
+  const len2 = vx * vx + vy * vy;
+  let t = len2 === 0 ? 0 : ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + vx * t), p.y - (a.y + vy * t));
+}
+
+function drawCourt(ctx) {
+  const { w, h } = dims;
+  const band = topBand();
+  ctx.save();
+  const grad = ctx.createLinearGradient(0, band.y1, 0, h);
+  grad.addColorStop(0, "rgba(64,180,110,0.16)");
+  grad.addColorStop(1, "rgba(20,120,70,0.30)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, band.y1, w, h - band.y1);
+  ctx.strokeStyle = "rgba(255,255,255,0.35)";
+  ctx.lineWidth = 3;
+  ctx.setLineDash([14, 12]);
+  ctx.beginPath(); ctx.moveTo(0, h * 0.60); ctx.lineTo(w, h * 0.60); ctx.stroke();
+  ctx.setLineDash([]);
+  // 페널티 박스
+  ctx.strokeRect(w * 0.22, band.y1 + 2, w * 0.56, h * 0.10);
+  ctx.restore();
+}
+
+// 목표 분수가 놓이는 자리 — 골대와 분수가 같은 자리를 쓰도록 한 곳에서 계산한다
+function targetSize() { return fluidPx(dims, 36, { min: 26, max: 50 }); }
+function targetY() { return topBand().y1 + targetSize() * 0.85; }
+
+// 골대. 골이 들어간 직후에는 골망이 출렁인다 — 마리오파티식 "성공 순간의 과장된 반응".
+// 목표 분수를 골대 안에 넣어 "이 값을 골대에 넣는다"가 그림으로 읽히게 했다.
+function drawGoal(ctx) {
+  const { w } = dims;
+  const gh = targetSize() * 1.9;
+  const gw = Math.min(w * 0.42, gh * 3.2);
+  const gx = w / 2 - gw / 2, gy = targetY() + gh * 0.5;
+  const since = performance.now() - netWave;
+  const wave = netWave && since < 900 ? (1 - since / 900) * gh * 0.55 : 0;
+
+  ctx.save();
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = Math.max(4, gh * 0.22);
+  ctx.strokeRect(gx, gy - gh, gw, gh);
+  ctx.strokeStyle = "rgba(255,255,255,0.45)";
+  ctx.lineWidth = 2;
+  for (let x = gx; x <= gx + gw; x += gw / 8) {
+    const t = (x - gx) / gw;
+    const sag = wave * Math.sin(Math.PI * t) * Math.sin(since / 55);
+    ctx.beginPath();
+    ctx.moveTo(x, gy - gh);
+    ctx.quadraticCurveTo(x + sag, gy - gh / 2, x, gy + sag * 0.6);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function loop(tsMs) {
+  requestAnimationFrame(loop);
+  if (mode === "motion" && video.readyState < 2) return;
+  const { ctx, w, h } = dims;
+  ctx.save();
+  shake.apply(ctx);
+  if (mode === "motion") drawMirroredVideo(ctx, video, w, h);
+  else drawFallbackBackground(ctx, w, h);
+  drawDrifters(ctx, drifters, dims, 1 / 60);
+  drawBunting(ctx, dims);
+
+  let result = null;
+  if (mode === "motion") result = poseTracker.detect(video, tsMs);
+  body.update(result, w, h, video, pointerInput);
+  if (mode === "motion" && state === "raise") {
+    if (startGate.update(tsMs, body.isReady())) goReady();
+  }
+  cursors = body.cursors();
+
+  if (state === "playing") stepGame();
+  if (mode === "motion") drawSkeleton(ctx, body.joints, { color: CUTE.sun, lineWidth: fluidPx(dims, 7, { min: 5, max: 10 }) });
+
+  if (state === "playing" || state === "raise") {
+    grades = updateGrades(grades);
+    drawGrades(ctx, grades, dims, fluidPx);
+    if (state === "playing") mascot.draw(ctx, dims, fluidPx);
+    drawPoseHint(ctx, dims, fluidPx, poseHint(body, mode));
+  }
+
+  for (const c of cursors) drawGloveCursor(ctx, c.x, c.y, fluidPx(dims, 44, { min: 32, max: 62 }), { active: stage === 1 });
+  ctx.restore();
+}
+
+function goReady() {
+  state = "ready";
+  document.getElementById("raisePanel").style.display = "none";
+  document.getElementById("readyPanel").style.display = "flex";
+  if (!isMuted()) sound.click();
+  setTimeout(async () => {
+    document.getElementById("readyPanel").style.display = "none";
+    await showRuleCard(document.getElementById("rulePanel"), RULE);
+    startCountdown();
+  }, 500);
+}
+
+function drawTopPanel(ctx, remain) {
+  const band = drawHudPanel(ctx, dims, fluidPx, {
+    left: stage === 0 ? "① 첫 패스를 고르세요" : "② 남은 값을 가진 친구에게!",
+    right: `🔥 ${combo}   🏅 ${count}골   ⏱ ${Math.ceil(remain / 1000)}초`,
+    headline: stage === 0 ? "골대에 넣을 값은?" : "남은 값은?",
+  });
+  // 분수는 글자가 아니라 그림이라 배너 안에 넣으면 눌린다. 배너 아래 골대 안에 크게 얹는다.
+  const showF = stage === 0 ? round.T : need;
+  drawFraction(ctx, showF, dims.w / 2, targetY(), targetSize(), stage === 0 ? CUTE.sun : CUTE.green);
+}
+
+function stepGame() {
+  const { ctx, w, h } = dims;
+  const dt = 1 / 60;
+  const remain = Math.max(0, playEndAt - performance.now());
+  if (remain <= 0) { endGame(); return; }
+  const armed = performance.now() - roundAt > 550;
+  const ball = ballPos();
+
+  // 동료들은 코트 안을 천천히 돌아다닌다 — 가만히 있으면 "패스"가 아니라 그냥 고르기가 된다
+  for (const m of mates) {
+    if (m.taken) continue;
+    m.x += m.vx * dt; m.y += m.vy * dt;
+    if (m.x < w * 0.09 || m.x > w * 0.91) m.vx *= -1;
+    if (m.y < h * 0.34 || m.y > h * 0.60) m.vy *= -1;
+  }
+  for (const d of defenders) {
+    d.x += d.vx * dt;
+    if (d.x < w * 0.10 || d.x > w * 0.90) d.vx *= -1;
+  }
+
+  if (armed && !resolving) {
+    for (const c of cursors) {
+      let best = null, bestD = Infinity;
+      for (const m of mates) {
+        if (m.taken) continue;
+        const dd = Math.hypot(c.x - m.x, c.y - m.y);
+        if (dd < m.R * 1.15 && dd < bestD) { bestD = dd; best = m; }
+      }
+      if (!best) continue;
+
+      // 공에서 그 친구까지 패스 길에 수비수가 서 있으면 가로채기 — 빈 공간을 찾아야 한다
+      const from = stage === 0 ? ball : passLine ? passLine.to : ball;
+      const blocker = defenders.find((d) => distToSegment(d, from, best) < d.r * 0.8);
+      if (blocker) {
+        fail(blocker.x, blocker.y, "수비에 막혔어요!");
+        return;
+      }
+
+      if (stage === 0) {
+        const rest = partnerExists(round, best.f);
+        if (!rest) { fail(best.x, best.y, "이 친구로는 만들 수 없어요"); return; }
+        best.taken = true;
+        need = rest;
+        passLine = { from, to: { x: best.x, y: best.y } };
+        stage = 1;
+        roundAt = performance.now();
+        spawnSparkles(sparks, best.x, best.y, 12, ["#fff", CUTE.sun]);
+        spawnPopup(popups, best.x, best.y - best.R, "패스!", CUTE.blueDark);
+        if (!isMuted()) sound.pop();
+      } else {
+        if (F.eq(best.f, need)) goal(best);
+        else fail(best.x, best.y, "값이 맞지 않아요");
+        return;
+      }
+      break;
+    }
+  }
+
+  drawCourt(ctx);
+  drawGoal(ctx);
+  drawTopPanel(ctx, remain);
+
+  // 이미 성공한 패스 길
+  if (passLine) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.85)";
+    ctx.lineWidth = Math.max(3, mateR() * 0.13);
+    ctx.setLineDash([12, 10]);
+    ctx.beginPath(); ctx.moveTo(passLine.from.x, passLine.from.y); ctx.lineTo(passLine.to.x, passLine.to.y); ctx.stroke();
+    ctx.restore();
+  }
+
+  // 수비수 — 찡그린 표정으로 "막고 있다"는 게 한눈에 보인다
+  for (const d of defenders) {
+    const by = bob(2.1, d.r * 0.07, d.x);
+    drawSticker(ctx, d.x, d.y + by, d.r, CUTE.redDark, { lineWidth: Math.max(3, d.r * 0.16) });
+    drawMood(ctx, d.x, d.y + by, d.r * 0.78, "sad");
+  }
+
+  // 동료들 — 얼굴은 위쪽, 분수는 아래쪽에 두어 "숫자를 든 친구"처럼 보이게 한다
+  for (const m of mates) {
+    if (m.taken) continue;
+    const by = bob(1.6, m.R * 0.06, m.idx);
+    drawSticker(ctx, m.x, m.y + by, m.R, m.color, { lineWidth: Math.max(3, m.R * 0.14) });
+    drawMood(ctx, m.x, m.y + by - m.R * 0.40, m.R * 0.42, stage === 1 ? "wow" : "idle");
+    drawFraction(ctx, m.f, m.x, m.y + by + m.R * 0.38, m.R * 0.46, "#ffffff");
+  }
+
+  // 공을 든 나
+  drawSticker(ctx, ball.x, ball.y, mateR() * 0.6, CUTE.sun, { lineWidth: Math.max(3, mateR() * 0.1) });
+  ctx.save();
+  ctx.font = `${mateR() * 0.75}px ${FONT}`;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("⚽", ball.x, ball.y);
+  ctx.restore();
+
+  if (performance.now() < flashUntil) {
+    ctx.save();
+    ctx.fillStyle = "rgba(255,107,107,0.18)";
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
+
+  confetti = updateConfetti(confetti, dt); drawConfetti(ctx, confetti);
+  sparks = updateSparkles(sparks, dt); drawSparkles(ctx, sparks);
+  popups = updatePopups(popups, dt); drawPopups(ctx, popups);
+  bigPopups = updateBigPopups(bigPopups, dt); drawBigPopups(ctx, bigPopups);
+
+  drawVignette(ctx, w, h, 0.16);
+  drawChunkyText(
+    ctx,
+    stage === 0 ? "두 번 패스해서 목표를 만들어요!" : "수비수를 피해 패스!",
+    w / 2, h * 0.86, fluidPx(dims, 16, { min: 12, max: 21 }), "#ffffff",
+    { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) },
+  );
+  drawTimeUrgency(ctx, dims, fluidPx, remain);
+  drawLevelStars(ctx, dims, autoDiff.level, fluidPx);
+}
+
+init();
+</script>
+</body>
+</html>

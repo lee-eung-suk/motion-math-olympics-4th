@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>소수 돌파 드리블 · 종목 3</title>
+<link rel="stylesheet" href="../css/jua.css">
+<link rel="stylesheet" href="../css/style.css?v=4">
+</head>
+<body>
+
+<div class="game-stage">
+  <video id="video" playsinline muted style="display:none"></video>
+  <canvas id="gameCanvas"></canvas>
+
+  <div class="hud">
+    <div class="rec" id="recIndicator" style="display:none"><span class="dot"></span>REC</div>
+    <button class="home-btn" id="homeBtn">🏠</button>
+  </div>
+
+  <div class="overlay-panel" id="loadingPanel">
+    <h2>⛹️ 소수 돌파 드리블</h2>
+    <p id="loadingText">준비 중…</p>
+  </div>
+
+  <div class="overlay-panel" id="raisePanel" style="display:none">
+    <div class="raise-icon" id="raiseIcon">🙋</div>
+    <h2 id="raiseText">손을 들어 주세요!</h2>
+    <p class="small-note" id="raiseNote">카메라에서 2~3걸음 물러나 온몸이 보이게 서 주세요</p>
+    <div class="hold-bar"><div class="hold-fill" id="holdFill"></div></div>
+  </div>
+
+  <div class="overlay-panel ready-flash" id="readyPanel" style="display:none">
+    <h2>✋ 좋아요! 준비됐어요</h2>
+  </div>
+
+
+  <div class="overlay-panel rule-card" id="rulePanel" style="display:none">
+    <div class="rule-inner">
+      <div class="rule-emoji">🎮</div>
+      <div class="rule-title">종목</div>
+      <div class="rule-text">규칙</div>
+      <div class="rule-tag">READY?</div>
+    </div>
+  </div>
+
+  <div class="overlay-panel start-stamp" id="startStamp" style="display:none">
+    <div class="stamp-word">START!</div>
+  </div>
+
+  <div class="overlay-panel" id="countdownPanel" style="display:none">
+    <div class="countdown-num" id="countNum">3</div>
+  </div>
+
+  <div class="overlay-panel" id="resultPanel" style="display:none">
+    <h2 id="resultTitle">결과</h2>
+    <div class="medal" id="resultMedal">🥉</div>
+    <div class="record-ribbon" id="recordRibbon">🎉 NEW RECORD!</div>
+    <div class="result-stats">
+      <div class="stat-box"><div class="num" id="statCount">0골</div><div class="label">기록</div></div>
+      <div class="stat-box"><div class="num" id="statBest">0골</div><div class="label">최고 기록</div></div>
+      <div class="stat-box"><div class="num" id="statCombo">0</div><div class="label">최고 콤보</div></div>
+    </div>
+    <div class="coin-earn" id="coinEarn"></div>
+    <video class="preview" id="previewVideo" controls playsinline style="display:none"></video>
+    <div class="action-row">
+      <button class="ghost-btn" id="savePhotoBtn">📸 사진</button>
+      <button class="ghost-btn" id="saveVideoBtn" style="display:none">🎬 3초 영상</button>
+      <button class="big-btn" id="retryBtn">🔁 한 번 더</button>
+      <button class="ghost-btn" id="homeBtn2">🏠 종목 선택</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import {
+  HighScore, requestWakeLock, SoundKit, FileAudioLoop,
+  ClipRecorder, downloadBlob,
+  drawMirroredVideo, fitCanvasToScreen,
+  AutoDifficulty, levelFromUrl, medalFor,
+  scheduleAutoRecording, ComboShot, drawPhotoOverlay,
+  ScreenShake, spawnPopup, updatePopups, drawPopups,
+  spawnBigPopup, updateBigPopups, drawBigPopups,
+  InputMode, PointerInput, StartGate, drawFallbackBackground,
+  startCamera, formatFileTimestamp, fluidPx, showSoundHint,
+  drawVignette, spawnConfetti, updateConfetti, drawConfetti,
+} from "../js/engine.js?v=2";
+import {
+  CUTE, FONT, LANE_COLORS, drawSticker, drawStickerRect, drawChunkyText,
+  spawnSparkles, updateSparkles, drawSparkles, makeDrifters, drawDrifters,
+  drawBunting, drawGloveCursor, drawLevelStars, drawPips,
+} from "../js/cute.js?v=4";
+import { PoseTracker, BodyInput, drawSkeleton } from "../js/pose.js?v=1";
+import {
+  ensureFont, Coins, Mascot, drawMood, spawnGrade, updateGrades, drawGrades,
+  showRuleCard, showStartStamp, showResult, hudBand, drawHudPanel,
+  drawTimeUrgency, poseHint, drawPoseHint,
+} from "../js/party.js?v=1";
+requestWakeLock();
+
+const UNIT = "g3";
+const TITLE = "소수 돌파 드리블";
+const RECORD_SUFFIX = "골";
+const MEDALS = { bronze: 3, silver: 5, gold: 7 };
+const WALLS_PER_GOAL = 3;
+const mode = InputMode.get();
+const RULE = { emoji: "⛹️", title: "소수 돌파 드리블", rule: "☐에 들어갈 소수가 적힌 문으로 손을 쏙! 세 번 연속 돌파하면 골이에요." };
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("gameCanvas");
+let dims = fitCanvasToScreen(canvas);
+let drifters = makeDrifters(12, dims.w, dims.h);
+window.addEventListener("resize", () => {
+  dims = fitCanvasToScreen(canvas);
+  drifters = makeDrifters(12, dims.w, dims.h);
+  if (state === "playing" && wall) layoutGates();
+});
+
+const sound = new SoundKit();
+const bgm = new FileAudioLoop("../assets/sounds/subbgm.mp3", 0.32);
+const isMuted = () => localStorage.getItem("smo_muted") === "1";
+
+document.getElementById("homeBtn").addEventListener("click", () => { bgm.stop(); location.href = "../index.html"; });
+document.getElementById("homeBtn2").addEventListener("click", () => { bgm.stop(); location.href = "../index.html"; });
+
+function randInt(min, max) { return min + Math.floor(Math.random() * (max - min + 1)); }
+function shuffle(arr) { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } return arr; }
+
+// -------------------- 소수 --------------------
+// 0.1 + 0.2 !== 0.3 이 되는 부동소수점 오차를 피하려고 1/100 단위 정수로만 계산하고,
+// 화면에 찍을 때만 소수로 바꾼다.
+function fmt(v) {
+  if (v % 100 === 0) return (v / 100).toFixed(1);
+  if (v % 10 === 0) return (v / 100).toFixed(1);
+  return (v / 100).toFixed(2);
+}
+
+// 소수 한 자리 값(1/100 단위로는 10의 배수)
+function d1(min, max) { return randInt(min, max) * 10; }
+function d2(min, max) { return randInt(min, max); }
+
+// 한 벽 = 한 문제. 빈칸이 어디에 오는지를 바꿔가며 덧셈·뺄셈을 모두 연습하게 한다.
+function genWall(level) {
+  let a, b, c, form;
+  if (level === 1) {
+    a = d1(1, 8); b = d1(1, 9 - a / 10 + 1);
+    b = Math.max(10, Math.min(b, 190 - a));
+    c = a + b;
+    form = ["a+_=c", "_+b=c", "a+b=_"][randInt(0, 2)];
+  } else if (level === 2) {
+    a = d2(15, 180); b = d2(15, 180);
+    // 받아올림·받아내림이 반드시 생기도록 끝자리를 조정한다
+    if ((a % 10) + (b % 10) < 10) b += 10 - ((a % 10) + (b % 10)) + randInt(0, 3);
+    c = a + b;
+    form = ["a+_=c", "_+b=c", "a-_=c", "a+b=_"][randInt(0, 3)];
+    if (form === "a-_=c") { c = a; a = a + b; }
+  } else {
+    // 자릿수가 다른 소수끼리 — "0.5 + 0.15" 같은 자리 맞추기가 핵심
+    a = Math.random() < 0.5 ? d1(1, 19) : d2(15, 195);
+    b = a % 10 === 0 ? d2(11, 189) : d1(1, 19);
+    c = a + b;
+    form = ["a+_=c", "_+b=c", "a-_=c", "a+b=_"][randInt(0, 3)];
+    if (form === "a-_=c") { c = a; a = a + b; }
+  }
+
+  let answer, text;
+  if (form === "a+_=c") { answer = c - a; text = `${fmt(a)} + ☐ = ${fmt(c)}`; }
+  else if (form === "_+b=c") { answer = c - b; text = `☐ + ${fmt(b)} = ${fmt(c)}`; }
+  else if (form === "a-_=c") { answer = a - c; text = `${fmt(a)} − ☐ = ${fmt(c)}`; }
+  else { answer = c; text = `${fmt(a)} + ${fmt(b)} = ☐`; }
+
+  // 오답: 자리를 안 맞추고 계산하거나, 받아올림을 빠뜨렸을 때 나오는 값
+  const misplace = (x, y) => {
+    // 0.5 + 0.15 를 "5+15=20"처럼 오른쪽 끝만 맞춰 더했을 때 나오는 값
+    const xs = x % 100 === 0 ? x / 100 : x % 10 === 0 ? x / 10 : x;
+    const ys = y % 100 === 0 ? y / 100 : y % 10 === 0 ? y / 10 : y;
+    return (xs + ys) * (x % 10 === 0 && y % 10 === 0 ? 10 : 1);
+  };
+  const pool = level === 1
+    ? [answer + 10, answer - 10, answer + 20, Math.abs(answer - 20)]
+    : [misplace(a, b), answer + 10, answer - 10, answer + 1, answer - 1, answer + 100, Math.abs(answer - 90)];
+  const opts = [answer];
+  for (const p of shuffle(pool)) {
+    if (opts.length >= (level === 1 ? 2 : 3)) break;
+    if (p <= 0 || p > 900) continue;
+    if (opts.some((o) => o === p)) continue;
+    opts.push(p);
+  }
+  while (opts.length < 2) opts.push(answer + 10 * opts.length);
+  return { text, answer, options: shuffle(opts) };
+}
+
+const poseTracker = new PoseTracker();
+const body = new BodyInput(mode);
+let pointerInput = null;
+
+async function init() {
+  await ensureFont();
+  if (!isMuted()) bgm.play(showSoundHint);
+  if (mode === "motion") {
+    try {
+      await startCamera(video, { width: 640, height: 480 });
+      if (!isMuted()) bgm.play(showSoundHint);
+    } catch (e) {
+      document.getElementById("loadingText").textContent = "⚠️ 카메라를 찾을 수 없어요. 카메라 권한을 확인해주세요.";
+      return;
+    }
+    document.getElementById("loadingText").textContent = "온몸 인식 AI를 불러오는 중…";
+    await poseTracker.init();
+  } else {
+    pointerInput = new PointerInput(canvas);
+  }
+  document.getElementById("loadingPanel").style.display = "none";
+  document.getElementById("raiseIcon").textContent = mode === "motion" ? "🙋" : "👆";
+  document.getElementById("raiseText").textContent = mode === "motion" ? "손을 들어 주세요!" : "화면을 터치(클릭)하면 시작!";
+  document.getElementById("raiseNote").style.display = mode === "motion" ? "block" : "none";
+  document.getElementById("raisePanel").style.display = "flex";
+  state = "raise";
+  requestAnimationFrame(loop);
+}
+
+let state = "loading";
+const holdFill = document.getElementById("holdFill");
+const startGate = new StartGate(mode, holdFill);
+
+let autoDiff, count, combo, maxCombo, playEndAt;
+let wall, gates, wallY, wallSpeed, cleared, resolving, wallAt, flashUntil = 0;
+let debris = []; // 돌파한 문이 부서져 나온 블록 조각
+let popups = [], bigPopups = [], confetti = [], sparks = [];
+const shake = new ScreenShake();
+const mascot = new Mascot();
+let grades = [];
+let recorder, comboShot, fallbackShot, autoRec, recordedBlob = null;
+const recIndicator = document.getElementById("recIndicator");
+let cursors = [];
+let lastFrameAt = performance.now();
+
+function topBand() { return hudBand(dims); }
+function judgeY() { return dims.h * 0.80; }
+function gateH() { return fluidPx(dims, 62, { min: 46, max: 92 }); }
+
+function layoutGates() {
+  const { w } = dims;
+  const n = wall.options.length;
+  const gw = Math.min(w * 0.26, (w * 0.92) / n - fluidPx(dims, 14, { min: 9, max: 20 }));
+  gates = wall.options.map((v, i) => ({
+    v, idx: i,
+    cx: w * 0.06 + (w * 0.88) * ((i + 0.5) / n),
+    w: gw,
+    color: LANE_COLORS[i % LANE_COLORS.length],
+  }));
+}
+
+function newWall() {
+  wall = genWall(autoDiff.level);
+  layoutGates();
+  wallY = topBand().y1 + gateH() * 1.15;
+  // 벽이 내려오는 데 걸리는 시간 — 문제를 읽고 계산할 시간이 있어야 하므로 넉넉하게 잡는다
+  const travelSec = [0, 6.2, 5.2, 4.4][autoDiff.level];
+  wallSpeed = (dims.h * 0.92 - wallY) / travelSec;
+  resolving = false;
+  wallAt = performance.now();
+}
+
+function startCountdown() {
+  state = "countdown";
+  document.getElementById("countdownPanel").style.display = "flex";
+  const numEl = document.getElementById("countNum");
+  let n = 3;
+  numEl.textContent = n;
+  if (!isMuted()) sound.countBeep();
+  const iv = setInterval(() => {
+    n--;
+    if (n <= 0) {
+      clearInterval(iv);
+      document.getElementById("countdownPanel").style.display = "none";
+      if (!isMuted()) sound.go();
+      showStartStamp(document.getElementById("startStamp"));
+      beginPlay();
+    } else {
+      numEl.textContent = n;
+      if (!isMuted()) sound.countBeep();
+    }
+  }, 700);
+}
+
+function beginPlay() {
+  state = "playing";
+  const prev = HighScore.get(UNIT);
+  autoDiff = new AutoDifficulty(levelFromUrl(AutoDifficulty.startLevelFromHighScore(prev)));
+  count = 0; combo = 0; maxCombo = 0; cleared = 0;
+  popups = []; bigPopups = []; confetti = []; sparks = [];
+  playEndAt = performance.now() + 60000;
+  lastFrameAt = performance.now();
+  newWall();
+
+  recorder = new ClipRecorder(canvas, sound, 24);
+  recorder.prepare();
+  comboShot = new ComboShot(canvas);
+  fallbackShot = new ComboShot(canvas);
+  autoRec = scheduleAutoRecording(recorder, {
+    onStartVisual: () => {
+      recIndicator.style.display = "flex";
+      setTimeout(() => { if (!comboShot.captured) fallbackShot.capture(canvas); }, 1500);
+    },
+    onEndVisual: () => { recIndicator.style.display = "none"; },
+    onDone: (blob) => { recordedBlob = blob; },
+    fallbackMs: 8000,
+  });
+}
+
+function passWall(g) {
+  if (resolving) return;
+  resolving = true;
+  cleared++;
+  spawnSparkles(sparks, g.cx, wallY, 16, ["#fff", CUTE.sun]);
+  breakGate(g);
+  if (cleared >= WALLS_PER_GOAL) {
+    count++; combo++;
+    mascot.cheer();
+    spawnGrade(grades, dims.w / 2, dims.h * 0.52, combo);
+    if (combo > maxCombo) { maxCombo = combo; comboShot.capture(canvas); }
+    autoDiff.reportCorrect();
+    autoRec.trigger();
+    shake.trigger(8, 180);
+    spawnConfetti(confetti, dims.w / 2, dims.h * 0.3, 40);
+    spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.36, `🏀 골인! ${count}골`, CUTE.sun);
+    if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
+    cleared = 0;
+    setTimeout(() => { if (state === "playing") newWall(); }, 850);
+  } else {
+    spawnPopup(popups, g.cx, wallY - gateH() * 0.8, "돌파!", CUTE.green);
+    if (!isMuted()) sound.pop();
+    setTimeout(() => { if (state === "playing") newWall(); }, 450);
+  }
+}
+
+// 통과한 문을 조각내어 흩뿌린다 — "뚫고 지나갔다"는 느낌을 눈으로 준다
+function breakGate(g) {
+  const GH = gateH();
+  for (let i = 0; i < 12; i++) {
+    debris.push({
+      x: g.cx + (Math.random() - 0.5) * g.w,
+      y: wallY + (Math.random() - 0.5) * GH,
+      vx: (Math.random() - 0.5) * dims.w * 0.5,
+      vy: -Math.random() * dims.h * 0.35,
+      s: GH * (0.14 + Math.random() * 0.16),
+      rot: Math.random() * Math.PI, spin: (Math.random() - 0.5) * 9,
+      color: g.color, life: 800, maxLife: 800,
+    });
+  }
+}
+
+function blocked(x, y, msg) {
+  if (resolving) return;
+  resolving = true;
+  combo = 0; cleared = 0;
+  mascot.oops();
+  autoDiff.reportWrong();
+  shake.trigger(5, 160);
+  flashUntil = performance.now() + 450;
+  spawnPopup(popups, x, y, msg, CUTE.red);
+  if (!isMuted()) sound.fizzle();
+  setTimeout(() => { if (state === "playing") newWall(); }, 800);
+}
+
+function endGame() {
+  state = "result";
+  const { medal, label } = medalFor(count, MEDALS);
+  const prev = HighScore.get(UNIT);
+  const best = Math.max(count, prev ? prev.count : 0);
+  const isNewRecord = count > 0 && (!prev || count > prev.count);
+  const earned = Coins.earn(medal, maxCombo);
+  Coins.add(earned);
+  if (!prev || count >= prev.count) {
+    HighScore.set(UNIT, { count, bestLevel: autoDiff.level, label: `${medal} ${count}${RECORD_SUFFIX}`, at: Date.now() });
+  }
+
+  const shot = comboShot.captured ? comboShot : fallbackShot;
+  const previewVideo = document.getElementById("previewVideo");
+  const saveVideoBtn = document.getElementById("saveVideoBtn");
+  if (recordedBlob) {
+    previewVideo.src = URL.createObjectURL(recordedBlob);
+    previewVideo.style.display = "block";
+    saveVideoBtn.style.display = "inline-block";
+  }
+  document.getElementById("savePhotoBtn").onclick = async () => {
+    const blob = await shot.toBlob((c, w, h) => drawPhotoOverlay(c, w, h, { title: TITLE, record: count + RECORD_SUFFIX, medal }));
+    downloadBlob(blob, `수학체육올림픽_소수드리블_${formatFileTimestamp()}.png`);
+  };
+  document.getElementById("saveVideoBtn").onclick = () => {
+    if (recordedBlob) downloadBlob(recordedBlob, `수학체육올림픽_소수드리블_${formatFileTimestamp()}.${recorder.extension}`);
+  };
+  showResult({
+    panel: document.getElementById("resultPanel"),
+    medalEl: document.getElementById("resultMedal"),
+    titleEl: document.getElementById("resultTitle"),
+    ribbonEl: document.getElementById("recordRibbon"),
+    coinEl: document.getElementById("coinEarn"),
+    medal, title: `${label}!`,
+    stats: [
+      { el: document.getElementById("statCount"), value: count, suffix: "골" },
+      { el: document.getElementById("statBest"), value: best, suffix: "골" },
+      { el: document.getElementById("statCombo"), value: maxCombo, prefix: "🔥" },
+    ],
+    newRecord: isNewRecord,
+    coins: earned,
+    sound, muted: isMuted(),
+  });
+}
+
+document.getElementById("retryBtn").addEventListener("click", () => {
+  document.getElementById("resultPanel").style.display = "none";
+  document.getElementById("raisePanel").style.display = "flex";
+  startGate.since = 0; startGate.ready = false; holdFill.style.width = "0%";
+  state = "raise";
+});
+
+document.getElementById("raisePanel").addEventListener("click", () => {
+  if (state === "raise" && mode !== "motion") goReady();
+});
+
+function drawCourt(ctx) {
+  const { w, h } = dims;
+  const band = topBand();
+  ctx.save();
+  const grad = ctx.createLinearGradient(0, band.y1, 0, h);
+  grad.addColorStop(0, "rgba(240,140,60,0.14)");
+  grad.addColorStop(1, "rgba(180,80,30,0.26)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, band.y1, w, h - band.y1);
+  ctx.strokeStyle = "rgba(255,255,255,0.30)";
+  ctx.lineWidth = 3;
+  for (let i = 1; i < 5; i++) {
+    const y = band.y1 + ((h - band.y1) * i) / 5;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function loop(tsMs) {
+  requestAnimationFrame(loop);
+  if (mode === "motion" && video.readyState < 2) return;
+  const { ctx, w, h } = dims;
+  ctx.save();
+  shake.apply(ctx);
+  if (mode === "motion") drawMirroredVideo(ctx, video, w, h);
+  else drawFallbackBackground(ctx, w, h);
+  drawDrifters(ctx, drifters, dims, 1 / 60);
+  drawBunting(ctx, dims);
+
+  let result = null;
+  if (mode === "motion") result = poseTracker.detect(video, tsMs);
+  body.update(result, w, h, video, pointerInput);
+  if (mode === "motion" && state === "raise") {
+    if (startGate.update(tsMs, body.isReady())) goReady();
+  }
+  cursors = body.cursors();
+
+  if (state === "playing") stepGame();
+  if (mode === "motion") drawSkeleton(ctx, body.joints, { color: CUTE.sun, lineWidth: fluidPx(dims, 7, { min: 5, max: 10 }) });
+
+  if (state === "playing" || state === "raise") {
+    grades = updateGrades(grades);
+    drawGrades(ctx, grades, dims, fluidPx);
+    if (state === "playing") mascot.draw(ctx, dims, fluidPx);
+    drawPoseHint(ctx, dims, fluidPx, poseHint(body, mode));
+  }
+
+  for (const c of cursors) drawGloveCursor(ctx, c.x, c.y, fluidPx(dims, 44, { min: 32, max: 62 }), { active: cleared > 0 });
+  ctx.restore();
+}
+
+function goReady() {
+  state = "ready";
+  document.getElementById("raisePanel").style.display = "none";
+  document.getElementById("readyPanel").style.display = "flex";
+  if (!isMuted()) sound.click();
+  setTimeout(async () => {
+    document.getElementById("readyPanel").style.display = "none";
+    await showRuleCard(document.getElementById("rulePanel"), RULE);
+    startCountdown();
+  }, 500);
+}
+
+function drawTopPanel(ctx, remain) {
+  const band = drawHudPanel(ctx, dims, fluidPx, {
+    left: "☐에 들어갈 소수의 문으로 돌파!",
+    right: `🔥 ${combo}   🏅 ${count}골   ⏱ ${Math.ceil(remain / 1000)}초`,
+    headline: wall.text,
+  });
+  // 골까지 남은 벽 — 3연속 돌파해야 슛이 열린다
+  drawPips(ctx, dims, dims.w / 2, band.y1 + fluidPx(dims, 20, { min: 14, max: 28 }), WALLS_PER_GOAL, cleared, fluidPx);
+}
+
+function stepGame() {
+  const { ctx, w, h } = dims;
+  const now = performance.now();
+  const dt = Math.min(0.06, (now - lastFrameAt) / 1000);
+  lastFrameAt = now;
+  const remain = Math.max(0, playEndAt - now);
+  if (remain <= 0) { endGame(); return; }
+  const armed = now - wallAt > 550;
+  const GH = gateH();
+
+  if (!resolving) wallY += wallSpeed * dt;
+
+  for (const d of debris) {
+    d.x += d.vx * dt; d.y += d.vy * dt; d.vy += dims.h * 1.6 * dt;
+    d.rot += d.spin * dt; d.life -= dt * 1000;
+  }
+  debris = debris.filter((d) => d.life > 0);
+
+  // 손이 문 안에 들어오면 바로 통과 판정 — 정확한 타이밍을 요구하지 않아 저학년도 억울하지 않다
+  if (armed && !resolving) {
+    for (const c of cursors) {
+      const g = gates.find((gg) => Math.abs(c.x - gg.cx) < gg.w / 2 && Math.abs(c.y - wallY) < GH * 0.75);
+      if (!g) continue;
+      if (g.v === wall.answer) passWall(g);
+      else blocked(g.cx, wallY, "수비에 막혔어요!");
+      return;
+    }
+  }
+  // 벽이 판정선을 지나쳐 버리면 공격 실패
+  if (!resolving && wallY > h * 0.92) {
+    blocked(w / 2, h * 0.86, "문을 놓쳤어요!");
+    return;
+  }
+
+  drawCourt(ctx);
+  drawTopPanel(ctx, remain);
+
+  // 판정선
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,255,255,0.5)";
+  ctx.lineWidth = 3;
+  ctx.setLineDash([12, 10]);
+  ctx.beginPath(); ctx.moveTo(0, judgeY()); ctx.lineTo(w, judgeY()); ctx.stroke();
+  ctx.restore();
+
+  // 수비 벽 + 문
+  ctx.save();
+  ctx.fillStyle = "rgba(29,43,77,0.55)";
+  ctx.fillRect(0, wallY - GH / 2, w, GH);
+  ctx.restore();
+  for (const g of gates) {
+    drawStickerRect(ctx, g.cx, wallY, g.w, GH * 0.94, GH * 0.24, g.color, {
+      lineWidth: Math.max(3, GH * 0.09), drop: Math.max(3, GH * 0.08),
+    });
+    // 문마다 표정 — 숫자만 적힌 상자가 아니라 "지키고 선 친구"로 보이게 한다
+    drawMood(ctx, g.cx, wallY - GH * 0.24, GH * 0.30, "idle");
+    drawChunkyText(ctx, fmt(g.v), g.cx, wallY + GH * 0.22, Math.min(GH * 0.42, g.w * 0.30), "#ffffff",
+      { outline: CUTE.ink, outlineWidth: Math.max(3, GH * 0.08) });
+  }
+
+  // 돌파한 문이 블록처럼 부서져 흩날린다
+  for (const d of debris) {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, d.life / d.maxLife);
+    ctx.translate(d.x, d.y);
+    ctx.rotate(d.rot);
+    ctx.fillStyle = d.color;
+    ctx.strokeStyle = CUTE.ink;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.roundRect(-d.s / 2, -d.s / 2, d.s, d.s, d.s * 0.25);
+    ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+  // 벽 양옆의 수비수
+  for (const s of [-1, 1]) {
+    const x = s < 0 ? w * 0.03 : w * 0.97;
+    drawSticker(ctx, x, wallY, GH * 0.3, CUTE.redDark, { lineWidth: 3 });
+    ctx.save();
+    ctx.font = `${GH * 0.36}px ${FONT}`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("🛡️", x, wallY);
+    ctx.restore();
+  }
+
+  if (now < flashUntil) {
+    ctx.save();
+    ctx.fillStyle = "rgba(255,107,107,0.18)";
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
+
+  confetti = updateConfetti(confetti, dt); drawConfetti(ctx, confetti);
+  sparks = updateSparkles(sparks, dt); drawSparkles(ctx, sparks);
+  popups = updatePopups(popups, dt); drawPopups(ctx, popups);
+  bigPopups = updateBigPopups(bigPopups, dt); drawBigPopups(ctx, bigPopups);
+
+  drawVignette(ctx, w, h, 0.16);
+  drawChunkyText(ctx, "내려오는 문에 손을 넣어 돌파해요!", w / 2, h * 0.955,
+    fluidPx(dims, 16, { min: 12, max: 21 }), "#ffffff",
+    { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) });
+  drawTimeUrgency(ctx, dims, fluidPx, remain);
+  drawLevelStars(ctx, dims, autoDiff.level, fluidPx);
+}
+
+init();
+</script>
+</body>
+</html>

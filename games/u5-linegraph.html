@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>꺾은선 스코어보드 · 종목 5</title>
+<link rel="stylesheet" href="../css/jua.css">
+<link rel="stylesheet" href="../css/style.css?v=4">
+</head>
+<body>
+
+<div class="game-stage">
+  <video id="video" playsinline muted style="display:none"></video>
+  <canvas id="gameCanvas"></canvas>
+
+  <div class="hud">
+    <div class="rec" id="recIndicator" style="display:none"><span class="dot"></span>REC</div>
+    <button class="home-btn" id="homeBtn">🏠</button>
+  </div>
+
+  <div class="overlay-panel" id="loadingPanel">
+    <h2>📈 꺾은선 스코어보드</h2>
+    <p id="loadingText">준비 중…</p>
+  </div>
+
+  <div class="overlay-panel" id="raisePanel" style="display:none">
+    <div class="raise-icon" id="raiseIcon">🙋</div>
+    <h2 id="raiseText">손을 들어 주세요!</h2>
+    <p class="small-note" id="raiseNote">카메라에서 2~3걸음 물러나 온몸이 보이게 서 주세요</p>
+    <div class="hold-bar"><div class="hold-fill" id="holdFill"></div></div>
+  </div>
+
+  <div class="overlay-panel ready-flash" id="readyPanel" style="display:none">
+    <h2>✋ 좋아요! 준비됐어요</h2>
+  </div>
+
+
+  <div class="overlay-panel rule-card" id="rulePanel" style="display:none">
+    <div class="rule-inner">
+      <div class="rule-emoji">🎮</div>
+      <div class="rule-title">종목</div>
+      <div class="rule-text">규칙</div>
+      <div class="rule-tag">READY?</div>
+    </div>
+  </div>
+
+  <div class="overlay-panel start-stamp" id="startStamp" style="display:none">
+    <div class="stamp-word">START!</div>
+  </div>
+
+  <div class="overlay-panel" id="countdownPanel" style="display:none">
+    <div class="countdown-num" id="countNum">3</div>
+  </div>
+
+  <div class="overlay-panel" id="resultPanel" style="display:none">
+    <h2 id="resultTitle">결과</h2>
+    <div class="medal" id="resultMedal">🥉</div>
+    <div class="record-ribbon" id="recordRibbon">🎉 NEW RECORD!</div>
+    <div class="result-stats">
+      <div class="stat-box"><div class="num" id="statCount">0개</div><div class="label">기록</div></div>
+      <div class="stat-box"><div class="num" id="statBest">0개</div><div class="label">최고 기록</div></div>
+      <div class="stat-box"><div class="num" id="statCombo">0</div><div class="label">최고 콤보</div></div>
+    </div>
+    <div class="coin-earn" id="coinEarn"></div>
+    <video class="preview" id="previewVideo" controls playsinline style="display:none"></video>
+    <div class="action-row">
+      <button class="ghost-btn" id="savePhotoBtn">📸 사진</button>
+      <button class="ghost-btn" id="saveVideoBtn" style="display:none">🎬 3초 영상</button>
+      <button class="big-btn" id="retryBtn">🔁 한 번 더</button>
+      <button class="ghost-btn" id="homeBtn2">🏠 종목 선택</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import {
+  HighScore, requestWakeLock, SoundKit, FileAudioLoop,
+  ClipRecorder, downloadBlob,
+  drawMirroredVideo, fitCanvasToScreen,
+  AutoDifficulty, levelFromUrl, medalFor,
+  scheduleAutoRecording, ComboShot, drawPhotoOverlay,
+  ScreenShake, spawnPopup, updatePopups, drawPopups,
+  spawnBigPopup, updateBigPopups, drawBigPopups,
+  InputMode, PointerInput, StartGate, drawFallbackBackground,
+  startCamera, formatFileTimestamp, fluidPx, showSoundHint,
+  drawVignette, spawnConfetti, updateConfetti, drawConfetti,
+} from "../js/engine.js?v=2";
+import {
+  CUTE, FONT, drawSticker, drawStickerRect, drawChunkyText,
+  spawnSparkles, updateSparkles, drawSparkles, makeDrifters, drawDrifters,
+  drawBunting, drawGloveCursor, drawLevelStars,
+} from "../js/cute.js?v=4";
+import { PoseTracker, BodyInput, drawSkeleton } from "../js/pose.js?v=1";
+import {
+  ensureFont, Coins, Mascot, drawMood, spawnGrade, updateGrades, drawGrades,
+  showRuleCard, showStartStamp, showResult, hudBand, drawHudPanel,
+  drawTimeUrgency, poseHint, drawPoseHint,
+} from "../js/party.js?v=1";
+requestWakeLock();
+
+const UNIT = "g5";
+const TITLE = "꺾은선 스코어보드";
+const RECORD_SUFFIX = "개";
+const MEDALS = { bronze: 5, silver: 8, gold: 11 };
+const mode = InputMode.get();
+const RULE = { emoji: "📈", title: "꺾은선 스코어보드", rule: "꺾은선그래프를 읽고 문제에 맞는 점이나 구간을 짚으면 공이 골대로 날아가요." };
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("gameCanvas");
+let dims = fitCanvasToScreen(canvas);
+let drifters = makeDrifters(12, dims.w, dims.h);
+window.addEventListener("resize", () => {
+  dims = fitCanvasToScreen(canvas);
+  drifters = makeDrifters(12, dims.w, dims.h);
+  if (state === "playing") layoutGraph();
+});
+
+const sound = new SoundKit();
+const bgm = new FileAudioLoop("../assets/sounds/subbgm.mp3", 0.32);
+const isMuted = () => localStorage.getItem("smo_muted") === "1";
+
+document.getElementById("homeBtn").addEventListener("click", () => { bgm.stop(); location.href = "../index.html"; });
+document.getElementById("homeBtn2").addEventListener("click", () => { bgm.stop(); location.href = "../index.html"; });
+
+function randInt(min, max) { return min + Math.floor(Math.random() * (max - min + 1)); }
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+// -------------------- 자료 --------------------
+const TOPICS = [
+  { title: "우리 반 농구 경기 득점", xUnit: "분", yUnit: "점", icon: "🏀", xLabels: (n) => Array.from({ length: n }, (_, i) => `${(i + 1) * 5}`) },
+  { title: "날짜별 줄넘기 횟수", xUnit: "일", yUnit: "회", icon: "🤾", xLabels: (n) => Array.from({ length: n }, (_, i) => `${i + 1}`) },
+  { title: "시각별 운동장 기온", xUnit: "시", yUnit: "℃", icon: "🌡️", xLabels: (n) => Array.from({ length: n }, (_, i) => `${i + 9}`) },
+  { title: "주별 강낭콩의 키", xUnit: "주", yUnit: "cm", icon: "🌱", xLabels: (n) => Array.from({ length: n }, (_, i) => `${i + 1}`) },
+];
+
+function fmtVal(v) { return Number.isInteger(v) ? String(v) : v.toFixed(1); }
+
+// 세로 눈금 한 칸의 크기와 시작값(물결선)을 단계마다 바꿔, 눈금을 읽는 힘을 기른다
+function genRound(level) {
+  const topic = pick(TOPICS);
+  const n = level === 1 ? 5 : level === 2 ? 6 : 7;
+  const step = level === 1 ? 1 : level === 2 ? pick([2, 5]) : pick([0.5, 2]);
+  const baseUnits = level === 3 ? randInt(4, 12) : 0; // 물결선으로 생략하는 아래쪽 칸 수
+  const maxUnits = 8;
+
+  for (let attempt = 0; attempt < 300; attempt++) {
+    const u = Array.from({ length: n }, () => randInt(0, maxUnits));
+    const vals = u.map((k) => (baseUnits + k) * step);
+    const deltas = u.slice(1).map((k, i) => k - u[i]);
+
+    const maxV = Math.max(...u), minV = Math.min(...u);
+    if (u.filter((k) => k === maxV).length !== 1) continue;
+    if (u.filter((k) => k === minV).length !== 1) continue;
+
+    const kinds = [];
+    kinds.push({ kind: "point", q: "값이 가장 큰 때", idx: u.indexOf(maxV) });
+    kinds.push({ kind: "point", q: "값이 가장 작은 때", idx: u.indexOf(minV) });
+    const vIdx = randInt(0, n - 1);
+    if (u.filter((k) => k === u[vIdx]).length === 1) {
+      kinds.push({ kind: "point", q: `${fmtVal(vals[vIdx])}${topic.yUnit}인 때`, idx: vIdx });
+    }
+
+    if (level >= 2) {
+      const up = Math.max(...deltas), down = Math.min(...deltas);
+      if (up > 0 && deltas.filter((d) => d === up).length === 1) {
+        kinds.push({ kind: "seg", q: "가장 많이 늘어난 구간", idx: deltas.indexOf(up) });
+      }
+      if (down < 0 && deltas.filter((d) => d === down).length === 1) {
+        kinds.push({ kind: "seg", q: "가장 많이 줄어든 구간", idx: deltas.indexOf(down) });
+      }
+      if (deltas.filter((d) => d === 0).length === 1) {
+        kinds.push({ kind: "seg", q: "변화가 없는 구간", idx: deltas.indexOf(0) });
+      }
+    }
+    if (level === 3) {
+      // 처음으로 어떤 값을 넘어선 때 — 왼쪽부터 차례로 읽어야 답이 나온다
+      const th = randInt(1, maxUnits - 1);
+      const first = u.findIndex((k) => k > th);
+      if (first > 0) {
+        kinds.push({ kind: "point", q: `처음으로 ${fmtVal((baseUnits + th) * step)}${topic.yUnit}보다 커진 때`, idx: first });
+      }
+    }
+
+    const chosen = pick(level === 1 ? kinds.filter((k) => k.kind === "point") : kinds);
+    if (!chosen) continue;
+    return { topic, n, step, baseUnits, u, vals, question: chosen };
+  }
+  // 안전망: 아주 단순한 문제로 대체
+  const u = [1, 4, 2, 6, 3];
+  return {
+    topic, n: 5, step: 1, baseUnits: 0, u, vals: u,
+    question: { kind: "point", q: "값이 가장 큰 때", idx: 3 },
+  };
+}
+
+const poseTracker = new PoseTracker();
+const body = new BodyInput(mode);
+let pointerInput = null;
+
+async function init() {
+  await ensureFont();
+  if (!isMuted()) bgm.play(showSoundHint);
+  if (mode === "motion") {
+    try {
+      await startCamera(video, { width: 640, height: 480 });
+      if (!isMuted()) bgm.play(showSoundHint);
+    } catch (e) {
+      document.getElementById("loadingText").textContent = "⚠️ 카메라를 찾을 수 없어요. 카메라 권한을 확인해주세요.";
+      return;
+    }
+    document.getElementById("loadingText").textContent = "온몸 인식 AI를 불러오는 중…";
+    await poseTracker.init();
+  } else {
+    pointerInput = new PointerInput(canvas);
+  }
+  document.getElementById("loadingPanel").style.display = "none";
+  document.getElementById("raiseIcon").textContent = mode === "motion" ? "🙋" : "👆";
+  document.getElementById("raiseText").textContent = mode === "motion" ? "손을 들어 주세요!" : "화면을 터치(클릭)하면 시작!";
+  document.getElementById("raiseNote").style.display = mode === "motion" ? "block" : "none";
+  document.getElementById("raisePanel").style.display = "flex";
+  state = "raise";
+  requestAnimationFrame(loop);
+}
+
+let state = "loading";
+const holdFill = document.getElementById("holdFill");
+const startGate = new StartGate(mode, holdFill);
+
+let autoDiff, count, combo, maxCombo, playEndAt;
+let round, plot, roundAt, resolving, flashUntil = 0, flight = null;
+let popups = [], bigPopups = [], confetti = [], sparks = [];
+const shake = new ScreenShake();
+const mascot = new Mascot();
+let grades = [];
+let recorder, comboShot, fallbackShot, autoRec, recordedBlob = null;
+const recIndicator = document.getElementById("recIndicator");
+let cursors = [];
+let lastFrameAt = performance.now();
+
+function topBand() { return hudBand(dims); }
+function goalPos() { return { x: dims.w * 0.93, y: dims.h * 0.52 }; }
+function hitR() { return fluidPx(dims, 30, { min: 22, max: 44 }); }
+
+// 그래프 좌표 계산 — 화면이 바뀌어도 판정 위치와 그림이 항상 같은 값을 쓰도록 한 곳에 모았다
+function layoutGraph() {
+  const { w, h } = dims;
+  const band = topBand();
+  const x0 = w * 0.13, x1 = w * 0.82;
+  const y0 = band.y1 + h * 0.11, y1 = h * 0.85;
+  const maxUnits = 8;
+  const px = (i) => x0 + ((x1 - x0) * (i + 0.5)) / round.n;
+  const py = (k) => y1 - ((y1 - y0) * k) / maxUnits;
+  plot = {
+    x0, x1, y0, y1, maxUnits, px, py,
+    pts: round.u.map((k, i) => ({ x: px(i), y: py(k), i })),
+    segs: round.u.slice(1).map((k, i) => ({
+      x: (px(i) + px(i + 1)) / 2,
+      y: (py(round.u[i]) + py(k)) / 2,
+      i,
+    })),
+  };
+}
+
+function newRound() {
+  round = genRound(autoDiff.level);
+  layoutGraph();
+  resolving = false;
+  flight = null;
+  roundAt = performance.now();
+}
+
+function startCountdown() {
+  state = "countdown";
+  document.getElementById("countdownPanel").style.display = "flex";
+  const numEl = document.getElementById("countNum");
+  let n = 3;
+  numEl.textContent = n;
+  if (!isMuted()) sound.countBeep();
+  const iv = setInterval(() => {
+    n--;
+    if (n <= 0) {
+      clearInterval(iv);
+      document.getElementById("countdownPanel").style.display = "none";
+      if (!isMuted()) sound.go();
+      showStartStamp(document.getElementById("startStamp"));
+      beginPlay();
+    } else {
+      numEl.textContent = n;
+      if (!isMuted()) sound.countBeep();
+    }
+  }, 700);
+}
+
+function beginPlay() {
+  state = "playing";
+  const prev = HighScore.get(UNIT);
+  autoDiff = new AutoDifficulty(levelFromUrl(AutoDifficulty.startLevelFromHighScore(prev)));
+  count = 0; combo = 0; maxCombo = 0;
+  popups = []; bigPopups = []; confetti = []; sparks = [];
+  playEndAt = performance.now() + 60000;
+  lastFrameAt = performance.now();
+  newRound();
+
+  recorder = new ClipRecorder(canvas, sound, 24);
+  recorder.prepare();
+  comboShot = new ComboShot(canvas);
+  fallbackShot = new ComboShot(canvas);
+  autoRec = scheduleAutoRecording(recorder, {
+    onStartVisual: () => {
+      recIndicator.style.display = "flex";
+      setTimeout(() => { if (!comboShot.captured) fallbackShot.capture(canvas); }, 1500);
+    },
+    onEndVisual: () => { recIndicator.style.display = "none"; },
+    onDone: (blob) => { recordedBlob = blob; },
+    fallbackMs: 8000,
+  });
+}
+
+function succeed(x, y) {
+  if (resolving) return;
+  resolving = true;
+  count++; combo++;
+  mascot.cheer();
+  spawnGrade(grades, dims.w / 2, dims.h * 0.52, combo);
+  if (combo > maxCombo) { maxCombo = combo; comboShot.capture(canvas); }
+  autoDiff.reportCorrect();
+  autoRec.trigger();
+  shake.trigger(7, 170);
+  flight = { from: { x, y }, to: goalPos(), start: performance.now(), dur: 620 };
+  spawnSparkles(sparks, x, y, 20, ["#fff", CUTE.sun, CUTE.green]);
+  if (!isMuted()) sound.pop();
+  setTimeout(() => {
+    if (state !== "playing") return;
+    spawnConfetti(confetti, goalPos().x, goalPos().y, 34);
+    spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.45, `⚽ 골인! ${count}개`, CUTE.sun);
+    if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
+  }, 620);
+  setTimeout(() => { if (state === "playing") newRound(); }, 1150);
+}
+
+function fail(x, y, msg) {
+  if (resolving) return;
+  resolving = true;
+  combo = 0;
+  mascot.oops();
+  autoDiff.reportWrong();
+  shake.trigger(4, 150);
+  flashUntil = performance.now() + 450;
+  spawnPopup(popups, x, y, msg, CUTE.red);
+  if (!isMuted()) sound.fizzle();
+  setTimeout(() => { if (state === "playing") newRound(); }, 800);
+}
+
+function endGame() {
+  state = "result";
+  const { medal, label } = medalFor(count, MEDALS);
+  const prev = HighScore.get(UNIT);
+  const best = Math.max(count, prev ? prev.count : 0);
+  const isNewRecord = count > 0 && (!prev || count > prev.count);
+  const earned = Coins.earn(medal, maxCombo);
+  Coins.add(earned);
+  if (!prev || count >= prev.count) {
+    HighScore.set(UNIT, { count, bestLevel: autoDiff.level, label: `${medal} ${count}${RECORD_SUFFIX}`, at: Date.now() });
+  }
+
+  const shot = comboShot.captured ? comboShot : fallbackShot;
+  const previewVideo = document.getElementById("previewVideo");
+  const saveVideoBtn = document.getElementById("saveVideoBtn");
+  if (recordedBlob) {
+    previewVideo.src = URL.createObjectURL(recordedBlob);
+    previewVideo.style.display = "block";
+    saveVideoBtn.style.display = "inline-block";
+  }
+  document.getElementById("savePhotoBtn").onclick = async () => {
+    const blob = await shot.toBlob((c, w, h) => drawPhotoOverlay(c, w, h, { title: TITLE, record: count + RECORD_SUFFIX, medal }));
+    downloadBlob(blob, `수학체육올림픽_꺾은선_${formatFileTimestamp()}.png`);
+  };
+  document.getElementById("saveVideoBtn").onclick = () => {
+    if (recordedBlob) downloadBlob(recordedBlob, `수학체육올림픽_꺾은선_${formatFileTimestamp()}.${recorder.extension}`);
+  };
+  showResult({
+    panel: document.getElementById("resultPanel"),
+    medalEl: document.getElementById("resultMedal"),
+    titleEl: document.getElementById("resultTitle"),
+    ribbonEl: document.getElementById("recordRibbon"),
+    coinEl: document.getElementById("coinEarn"),
+    medal, title: `${label}!`,
+    stats: [
+      { el: document.getElementById("statCount"), value: count, suffix: "개" },
+      { el: document.getElementById("statBest"), value: best, suffix: "개" },
+      { el: document.getElementById("statCombo"), value: maxCombo, prefix: "🔥" },
+    ],
+    newRecord: isNewRecord,
+    coins: earned,
+    sound, muted: isMuted(),
+  });
+}
+
+document.getElementById("retryBtn").addEventListener("click", () => {
+  document.getElementById("resultPanel").style.display = "none";
+  document.getElementById("raisePanel").style.display = "flex";
+  startGate.since = 0; startGate.ready = false; holdFill.style.width = "0%";
+  state = "raise";
+});
+
+document.getElementById("raisePanel").addEventListener("click", () => {
+  if (state === "raise" && mode !== "motion") goReady();
+});
+
+function loop(tsMs) {
+  requestAnimationFrame(loop);
+  if (mode === "motion" && video.readyState < 2) return;
+  const { ctx, w, h } = dims;
+  ctx.save();
+  shake.apply(ctx);
+  if (mode === "motion") drawMirroredVideo(ctx, video, w, h);
+  else drawFallbackBackground(ctx, w, h);
+  drawDrifters(ctx, drifters, dims, 1 / 60);
+  drawBunting(ctx, dims);
+
+  let result = null;
+  if (mode === "motion") result = poseTracker.detect(video, tsMs);
+  body.update(result, w, h, video, pointerInput);
+  if (mode === "motion" && state === "raise") {
+    if (startGate.update(tsMs, body.isReady())) goReady();
+  }
+  cursors = body.cursors();
+
+  if (state === "playing") stepGame();
+  if (mode === "motion") drawSkeleton(ctx, body.joints, { color: CUTE.sun, lineWidth: fluidPx(dims, 7, { min: 5, max: 10 }) });
+
+  if (state === "playing" || state === "raise") {
+    grades = updateGrades(grades);
+    drawGrades(ctx, grades, dims, fluidPx);
+    if (state === "playing") mascot.draw(ctx, dims, fluidPx);
+    drawPoseHint(ctx, dims, fluidPx, poseHint(body, mode));
+  }
+
+  for (const c of cursors) drawGloveCursor(ctx, c.x, c.y, fluidPx(dims, 44, { min: 32, max: 62 }), { active: !!flight });
+  ctx.restore();
+}
+
+function goReady() {
+  state = "ready";
+  document.getElementById("raisePanel").style.display = "none";
+  document.getElementById("readyPanel").style.display = "flex";
+  if (!isMuted()) sound.click();
+  setTimeout(async () => {
+    document.getElementById("readyPanel").style.display = "none";
+    await showRuleCard(document.getElementById("rulePanel"), RULE);
+    startCountdown();
+  }, 500);
+}
+
+function drawTopPanel(ctx, remain) {
+  drawHudPanel(ctx, dims, fluidPx, {
+    left: `${round.topic.icon} ${round.topic.title}`,
+    right: `🔥 ${combo}   🏅 ${count}개   ⏱ ${Math.ceil(remain / 1000)}초`,
+    headline: `${round.question.q}${round.question.kind === "seg" ? "을 짚어요!" : "를 짚어요!"}`,
+  });
+}
+
+function drawGraph(ctx) {
+  const { w } = dims;
+  const p = plot;
+  const step = round.step, baseUnits = round.baseUnits;
+  const labels = round.topic.xLabels(round.n);
+  const fs = fluidPx(dims, 13, { min: 9, max: 17 });
+
+  // 그래프 판
+  ctx.save();
+  ctx.fillStyle = "rgba(255,255,255,0.88)";
+  ctx.strokeStyle = CUTE.ink;
+  ctx.lineWidth = fluidPx(dims, 4, { min: 3, max: 6 });
+  const pad = fluidPx(dims, 10, { min: 7, max: 15 });
+  ctx.beginPath();
+  ctx.roundRect(p.x0 - fluidPx(dims, 46, { min: 34, max: 62 }), p.y0 - pad * 2.2,
+    (p.x1 - p.x0) + fluidPx(dims, 60, { min: 44, max: 80 }), (p.y1 - p.y0) + pad * 4.6,
+    fluidPx(dims, 16, { min: 11, max: 22 }));
+  ctx.fill(); ctx.stroke();
+  ctx.restore();
+
+  // 가로 눈금선 + 세로축 숫자
+  ctx.save();
+  ctx.textBaseline = "middle";
+  ctx.font = `800 ${fs}px ${FONT}`;
+  for (let k = 0; k <= p.maxUnits; k += 2) {
+    const y = p.py(k);
+    ctx.strokeStyle = "rgba(29,43,77,0.16)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(p.x0, y); ctx.lineTo(p.x1, y); ctx.stroke();
+    ctx.fillStyle = CUTE.ink;
+    ctx.textAlign = "right";
+    ctx.fillText(fmtVal((baseUnits + k) * step), p.x0 - fluidPx(dims, 8, { min: 6, max: 12 }), y);
+  }
+  // 축
+  ctx.strokeStyle = CUTE.ink;
+  ctx.lineWidth = fluidPx(dims, 3, { min: 2.5, max: 4.5 });
+  ctx.beginPath();
+  ctx.moveTo(p.x0, p.y0 - fluidPx(dims, 6, { min: 4, max: 10 }));
+  ctx.lineTo(p.x0, p.y1); ctx.lineTo(p.x1, p.y1);
+  ctx.stroke();
+
+  // 물결선 — 세로축 아래쪽을 생략했다는 표시
+  if (baseUnits > 0) {
+    ctx.strokeStyle = CUTE.ink;
+    ctx.lineWidth = fluidPx(dims, 2.5, { min: 2, max: 4 });
+    ctx.beginPath();
+    const yy = p.y1 - fluidPx(dims, 14, { min: 10, max: 20 });
+    for (let x = p.x0 - fluidPx(dims, 7, { min: 5, max: 11 }); x <= p.x0 + fluidPx(dims, 7, { min: 5, max: 11 }); x += 2) {
+      const dy = Math.sin((x - p.x0) * 0.9) * fluidPx(dims, 3.5, { min: 2.5, max: 5 });
+      if (x === p.x0 - fluidPx(dims, 7, { min: 5, max: 11 })) ctx.moveTo(x, yy + dy); else ctx.lineTo(x, yy + dy);
+    }
+    ctx.stroke();
+  }
+
+  // 가로축 라벨
+  ctx.fillStyle = CUTE.ink;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  labels.forEach((lb, i) => ctx.fillText(lb, p.px(i), p.y1 + fluidPx(dims, 7, { min: 5, max: 11 })));
+  ctx.textAlign = "left";
+  ctx.fillText(`(${round.topic.xUnit})`, p.x1 + fluidPx(dims, 4, { min: 3, max: 7 }), p.y1 + fluidPx(dims, 7, { min: 5, max: 11 }));
+  ctx.textAlign = "right";
+  ctx.textBaseline = "bottom";
+  ctx.fillText(`(${round.topic.yUnit})`, p.x0 + fluidPx(dims, 4, { min: 3, max: 7 }), p.y0 - fluidPx(dims, 8, { min: 6, max: 13 }));
+  ctx.restore();
+
+  // 꺾은선
+  ctx.save();
+  ctx.lineJoin = "round"; ctx.lineCap = "round";
+  ctx.strokeStyle = CUTE.blueDark;
+  ctx.lineWidth = fluidPx(dims, 5, { min: 4, max: 8 });
+  ctx.beginPath();
+  p.pts.forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y)));
+  ctx.stroke();
+  ctx.restore();
+
+  // 구간 문제일 때는 선분 가운데를, 점 문제일 때는 점을 짚는다 — 어느 쪽을 짚어야 하는지 모양으로 구분된다
+  const R = hitR();
+  if (round.question.kind === "seg") {
+    for (const s of plot.segs) {
+      ctx.save();
+      ctx.beginPath(); ctx.arc(s.x, s.y, R * 0.62, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,209,102,0.55)";
+      ctx.fill();
+      ctx.strokeStyle = CUTE.orangeDark; ctx.lineWidth = 3;
+      ctx.setLineDash([6, 5]); ctx.stroke();
+      ctx.restore();
+    }
+  }
+  for (const q of p.pts) {
+    const pr = R * (round.question.kind === "seg" ? 0.3 : 0.42);
+    drawSticker(ctx, q.x, q.y, pr, CUTE.blue, { lineWidth: 3, drop: 2 });
+    // 점 문제일 때만 표정을 넣는다 — 구간 문제에서는 점이 작아 얼굴이 뭉개진다
+    if (round.question.kind !== "seg") drawMood(ctx, q.x, q.y, pr * 0.9, "idle");
+  }
+}
+
+function stepGame() {
+  const { ctx, w, h } = dims;
+  const now = performance.now();
+  const dt = Math.min(0.06, (now - lastFrameAt) / 1000);
+  lastFrameAt = now;
+  const remain = Math.max(0, playEndAt - now);
+  if (remain <= 0) { endGame(); return; }
+  const armed = now - roundAt > 550;
+  const R = hitR();
+
+  if (armed && !resolving) {
+    const targets = round.question.kind === "seg" ? plot.segs : plot.pts;
+    let best = null, bestD = Infinity;
+    for (const c of cursors) {
+      for (const t of targets) {
+        const d = Math.hypot(c.x - t.x, c.y - t.y);
+        if (d < R && d < bestD) { bestD = d; best = t; }
+      }
+    }
+    if (best) {
+      if (best.i === round.question.idx) { succeed(best.x, best.y); }
+      else fail(best.x, best.y - R, "그래프를 다시 봐요!");
+    }
+  }
+
+  drawTopPanel(ctx, remain);
+  drawGraph(ctx);
+
+  // 골대
+  const g = goalPos();
+  ctx.save();
+  ctx.font = `${fluidPx(dims, 52, { min: 36, max: 74 })}px ${FONT}`;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("🥅", g.x, g.y);
+  ctx.restore();
+
+  // 정답을 짚으면 공이 그 자리에서 골대로 날아간다
+  if (flight) {
+    const t = Math.min(1, (now - flight.start) / flight.dur);
+    const x = flight.from.x + (flight.to.x - flight.from.x) * t;
+    const arc = Math.sin(Math.PI * t) * h * 0.14;
+    const y = flight.from.y + (flight.to.y - flight.from.y) * t - arc;
+    ctx.save();
+    ctx.font = `${fluidPx(dims, 30, { min: 22, max: 42 })}px ${FONT}`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.translate(x, y);
+    ctx.rotate(t * Math.PI * 2);
+    ctx.fillText("⚽", 0, 0);
+    ctx.restore();
+    if (t >= 1) flight = null;
+  }
+
+  if (now < flashUntil) {
+    ctx.save();
+    ctx.fillStyle = "rgba(255,107,107,0.18)";
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
+
+  confetti = updateConfetti(confetti, dt); drawConfetti(ctx, confetti);
+  sparks = updateSparkles(sparks, dt); drawSparkles(ctx, sparks);
+  popups = updatePopups(popups, dt); drawPopups(ctx, popups);
+  bigPopups = updateBigPopups(bigPopups, dt); drawBigPopups(ctx, bigPopups);
+
+  drawVignette(ctx, w, h, 0.16);
+  drawChunkyText(ctx,
+    round.question.kind === "seg" ? "선분 가운데의 노란 동그라미를 짚어요!" : "그래프의 점을 짚어요!",
+    w / 2, h * 0.955, fluidPx(dims, 15, { min: 11, max: 20 }), "#ffffff",
+    { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) });
+  drawTimeUrgency(ctx, dims, fluidPx, remain);
+  drawLevelStars(ctx, dims, autoDiff.level, fluidPx);
+}
+
+init();
+</script>
+</body>
+</html>

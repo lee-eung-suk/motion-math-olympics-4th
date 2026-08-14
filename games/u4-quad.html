@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>사각형 뒤집기 패스 · 종목 4</title>
+<link rel="stylesheet" href="../css/jua.css">
+<link rel="stylesheet" href="../css/style.css?v=4">
+</head>
+<body>
+
+<div class="game-stage">
+  <video id="video" playsinline muted style="display:none"></video>
+  <canvas id="gameCanvas"></canvas>
+
+  <div class="hud">
+    <div class="rec" id="recIndicator" style="display:none"><span class="dot"></span>REC</div>
+    <button class="home-btn" id="homeBtn">🏠</button>
+  </div>
+
+  <div class="overlay-panel" id="loadingPanel">
+    <h2>🤾 사각형 뒤집기 패스</h2>
+    <p id="loadingText">준비 중…</p>
+  </div>
+
+  <div class="overlay-panel" id="raisePanel" style="display:none">
+    <div class="raise-icon" id="raiseIcon">🙋</div>
+    <h2 id="raiseText">손을 들어 주세요!</h2>
+    <p class="small-note" id="raiseNote">카메라에서 2~3걸음 물러나 온몸이 보이게 서 주세요</p>
+    <div class="hold-bar"><div class="hold-fill" id="holdFill"></div></div>
+  </div>
+
+  <div class="overlay-panel ready-flash" id="readyPanel" style="display:none">
+    <h2>✋ 좋아요! 준비됐어요</h2>
+  </div>
+
+
+  <div class="overlay-panel rule-card" id="rulePanel" style="display:none">
+    <div class="rule-inner">
+      <div class="rule-emoji">🎮</div>
+      <div class="rule-title">종목</div>
+      <div class="rule-text">규칙</div>
+      <div class="rule-tag">READY?</div>
+    </div>
+  </div>
+
+  <div class="overlay-panel start-stamp" id="startStamp" style="display:none">
+    <div class="stamp-word">START!</div>
+  </div>
+
+  <div class="overlay-panel" id="countdownPanel" style="display:none">
+    <div class="countdown-num" id="countNum">3</div>
+  </div>
+
+  <div class="overlay-panel" id="resultPanel" style="display:none">
+    <h2 id="resultTitle">결과</h2>
+    <div class="medal" id="resultMedal">🥉</div>
+    <div class="record-ribbon" id="recordRibbon">🎉 NEW RECORD!</div>
+    <div class="result-stats">
+      <div class="stat-box"><div class="num" id="statCount">0개</div><div class="label">기록</div></div>
+      <div class="stat-box"><div class="num" id="statBest">0개</div><div class="label">최고 기록</div></div>
+      <div class="stat-box"><div class="num" id="statCombo">0</div><div class="label">최고 콤보</div></div>
+    </div>
+    <div class="coin-earn" id="coinEarn"></div>
+    <video class="preview" id="previewVideo" controls playsinline style="display:none"></video>
+    <div class="action-row">
+      <button class="ghost-btn" id="savePhotoBtn">📸 사진</button>
+      <button class="ghost-btn" id="saveVideoBtn" style="display:none">🎬 3초 영상</button>
+      <button class="big-btn" id="retryBtn">🔁 한 번 더</button>
+      <button class="ghost-btn" id="homeBtn2">🏠 종목 선택</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import {
+  HighScore, requestWakeLock, SoundKit, FileAudioLoop,
+  ClipRecorder, downloadBlob,
+  drawMirroredVideo, fitCanvasToScreen,
+  AutoDifficulty, levelFromUrl, medalFor,
+  scheduleAutoRecording, ComboShot, drawPhotoOverlay,
+  ScreenShake, spawnPopup, updatePopups, drawPopups,
+  spawnBigPopup, updateBigPopups, drawBigPopups,
+  InputMode, PointerInput, StartGate, drawFallbackBackground,
+  startCamera, formatFileTimestamp, fluidPx, showSoundHint,
+  drawVignette, spawnConfetti, updateConfetti, drawConfetti,
+} from "../js/engine.js?v=2";
+import {
+  CUTE, FONT, LANE_COLORS, bob, drawStickerRect, drawChunkyText,
+  spawnSparkles, updateSparkles, drawSparkles, makeDrifters, drawDrifters,
+  drawBunting, drawGloveCursor, drawLevelStars,
+} from "../js/cute.js?v=4";
+import { PoseTracker, BodyInput, drawSkeleton } from "../js/pose.js?v=1";
+import {
+  ensureFont, Coins, Mascot, drawMood, spawnGrade, updateGrades, drawGrades,
+  showRuleCard, showStartStamp, showResult, hudBand, drawHudPanel,
+  drawTimeUrgency, poseHint, drawPoseHint,
+} from "../js/party.js?v=1";
+requestWakeLock();
+
+const UNIT = "g4";
+const TITLE = "사각형 뒤집기 패스";
+const RECORD_SUFFIX = "개";
+const MEDALS = { bronze: 4, silver: 6, gold: 9 };
+const mode = InputMode.get();
+const RULE = { emoji: "🤾", title: "사각형 뒤집기 패스", rule: "조건에 맞는 사각형 조각을 잡고, 몸을 돌려 빈틈의 각도에 맞춰 던져요!" };
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("gameCanvas");
+let dims = fitCanvasToScreen(canvas);
+let drifters = makeDrifters(12, dims.w, dims.h);
+window.addEventListener("resize", () => {
+  dims = fitCanvasToScreen(canvas);
+  drifters = makeDrifters(12, dims.w, dims.h);
+  if (state === "playing") layoutPieces();
+});
+
+const sound = new SoundKit();
+const bgm = new FileAudioLoop("../assets/sounds/subbgm.mp3", 0.32);
+const isMuted = () => localStorage.getItem("smo_muted") === "1";
+
+document.getElementById("homeBtn").addEventListener("click", () => { bgm.stop(); location.href = "../index.html"; });
+document.getElementById("homeBtn2").addEventListener("click", () => { bgm.stop(); location.href = "../index.html"; });
+
+function randInt(min, max) { return min + Math.floor(Math.random() * (max - min + 1)); }
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function shuffle(arr) { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } return arr; }
+
+// -------------------- 사각형 --------------------
+// trap = 평행한 변이 한 쌍이라도 있는가(=사다리꼴), para = 평행사변형, rhom = 마름모, rect = 직사각형
+const SHAPES = [
+  { key: "square", name: "정사각형", trap: 1, para: 1, rhom: 1, rect: 1,
+    pts: [[-0.55, -0.55], [0.55, -0.55], [0.55, 0.55], [-0.55, 0.55]] },
+  { key: "rect", name: "직사각형", trap: 1, para: 1, rhom: 0, rect: 1,
+    pts: [[-0.75, -0.44], [0.75, -0.44], [0.75, 0.44], [-0.75, 0.44]] },
+  { key: "rhom", name: "마름모", trap: 1, para: 1, rhom: 1, rect: 0,
+    pts: [[0, -0.72], [0.62, 0], [0, 0.72], [-0.62, 0]] },
+  { key: "para", name: "평행사변형", trap: 1, para: 1, rhom: 0, rect: 0,
+    pts: [[-0.78, 0.42], [-0.34, -0.42], [0.78, -0.42], [0.34, 0.42]] },
+  { key: "trap", name: "사다리꼴", trap: 1, para: 0, rhom: 0, rect: 0,
+    pts: [[-0.78, 0.42], [-0.40, -0.42], [0.40, -0.42], [0.78, 0.42]] },
+  { key: "gen", name: "사각형", trap: 0, para: 0, rhom: 0, rect: 0,
+    pts: [[-0.72, 0.38], [-0.46, -0.48], [0.62, -0.28], [0.74, 0.46]] },
+];
+
+// 조건은 "맞는 것 1개 이상, 틀린 것 2개 이상"이 나오는 것만 쓴다.
+// (예: "평행한 변이 한 쌍이라도 있는 사각형"은 여섯 중 다섯이 해당돼 오답 후보가 모자란다)
+const CONDS = {
+  1: [
+    { text: "평행사변형", test: (s) => s.para },
+    { text: "네 변의 길이가 모두 같은 사각형", test: (s) => s.rhom },
+  ],
+  2: [
+    { text: "마름모", test: (s) => s.rhom },
+    { text: "직사각형", test: (s) => s.rect },
+    { text: "평행사변형", test: (s) => s.para },
+    { text: "정사각형", test: (s) => s.rhom && s.rect },
+  ],
+  3: [
+    { text: "마름모이면서 직사각형인 사각형", test: (s) => s.rhom && s.rect },
+    { text: "평행사변형이지만 마름모는 아닌 사각형", test: (s) => s.para && !s.rhom },
+    { text: "사다리꼴이지만 평행사변형은 아닌 사각형", test: (s) => s.trap && !s.para },
+  ],
+};
+
+const TURNS = [45, 90, 135, 180];
+
+function genRound(level) {
+  const usable = CONDS[level].filter(
+    (c) => SHAPES.some((s) => c.test(s)) && SHAPES.filter((s) => !c.test(s)).length >= 2,
+  );
+  const cond = pick(usable.length ? usable : CONDS[1]);
+  const yes = SHAPES.filter((s) => cond.test(s));
+  const no = SHAPES.filter((s) => !cond.test(s));
+  const chosen = pick(yes);
+  const others = shuffle([...no]).slice(0, 2);
+  const pieces = shuffle([chosen, ...others]);
+  const turn = level === 1 ? pick([90, 180]) : pick(TURNS);
+  const dir = Math.random() < 0.5 ? -1 : 1; // 왼쪽/오른쪽으로 돌리기
+  return { cond, pieces, answerKey: chosen.key, turn, dir };
+}
+
+const poseTracker = new PoseTracker();
+const body = new BodyInput(mode);
+let pointerInput = null;
+
+async function init() {
+  await ensureFont();
+  if (!isMuted()) bgm.play(showSoundHint);
+  if (mode === "motion") {
+    try {
+      await startCamera(video, { width: 640, height: 480 });
+      if (!isMuted()) bgm.play(showSoundHint);
+    } catch (e) {
+      document.getElementById("loadingText").textContent = "⚠️ 카메라를 찾을 수 없어요. 카메라 권한을 확인해주세요.";
+      return;
+    }
+    document.getElementById("loadingText").textContent = "온몸 인식 AI를 불러오는 중…";
+    await poseTracker.init();
+  } else {
+    pointerInput = new PointerInput(canvas);
+  }
+  document.getElementById("loadingPanel").style.display = "none";
+  document.getElementById("raiseIcon").textContent = mode === "motion" ? "🙋" : "👆";
+  document.getElementById("raiseText").textContent = mode === "motion" ? "손을 들어 주세요!" : "화면을 터치(클릭)하면 시작!";
+  document.getElementById("raiseNote").style.display = mode === "motion" ? "block" : "none";
+  document.getElementById("raisePanel").style.display = "flex";
+  state = "raise";
+  requestAnimationFrame(loop);
+}
+
+let state = "loading";
+const holdFill = document.getElementById("holdFill");
+const startGate = new StartGate(mode, holdFill);
+
+let autoDiff, count, combo, maxCombo, playEndAt;
+let round, slots, phase, chosen, roundAt, resolving, flashUntil = 0;
+let pieceDeg, matchSince, snap = null; // snap: 각도가 맞아 조각이 빈틈으로 빨려 들어가는 연출
+let popups = [], bigPopups = [], confetti = [], sparks = [];
+const shake = new ScreenShake();
+const mascot = new Mascot();
+let grades = [];
+let recorder, comboShot, fallbackShot, autoRec, recordedBlob = null;
+const recIndicator = document.getElementById("recIndicator");
+let cursors = [];
+let lastFrameAt = performance.now();
+
+function topBand() { return hudBand(dims); }
+function pieceR() { return fluidPx(dims, 70, { min: 50, max: 100 }); }
+function blockY() { return dims.h * 0.30; }
+
+function layoutPieces() {
+  const { w, h } = dims;
+  const R = pieceR();
+  slots = round.pieces.map((s, i) => ({
+    shape: s, idx: i,
+    x: w * (0.20 + 0.30 * i),
+    y: h * 0.62,
+    color: LANE_COLORS[i % LANE_COLORS.length],
+    R,
+  }));
+}
+
+function newRound() {
+  round = genRound(autoDiff.level);
+  phase = "pick"; chosen = null; pieceDeg = 0; matchSince = 0; snap = null;
+  layoutPieces();
+  resolving = false;
+  roundAt = performance.now();
+}
+
+function startCountdown() {
+  state = "countdown";
+  document.getElementById("countdownPanel").style.display = "flex";
+  const numEl = document.getElementById("countNum");
+  let n = 3;
+  numEl.textContent = n;
+  if (!isMuted()) sound.countBeep();
+  const iv = setInterval(() => {
+    n--;
+    if (n <= 0) {
+      clearInterval(iv);
+      document.getElementById("countdownPanel").style.display = "none";
+      if (!isMuted()) sound.go();
+      showStartStamp(document.getElementById("startStamp"));
+      beginPlay();
+    } else {
+      numEl.textContent = n;
+      if (!isMuted()) sound.countBeep();
+    }
+  }, 700);
+}
+
+function beginPlay() {
+  state = "playing";
+  const prev = HighScore.get(UNIT);
+  autoDiff = new AutoDifficulty(levelFromUrl(AutoDifficulty.startLevelFromHighScore(prev)));
+  count = 0; combo = 0; maxCombo = 0;
+  popups = []; bigPopups = []; confetti = []; sparks = [];
+  playEndAt = performance.now() + 60000;
+  lastFrameAt = performance.now();
+  newRound();
+
+  recorder = new ClipRecorder(canvas, sound, 24);
+  recorder.prepare();
+  comboShot = new ComboShot(canvas);
+  fallbackShot = new ComboShot(canvas);
+  autoRec = scheduleAutoRecording(recorder, {
+    onStartVisual: () => {
+      recIndicator.style.display = "flex";
+      setTimeout(() => { if (!comboShot.captured) fallbackShot.capture(canvas); }, 1500);
+    },
+    onEndVisual: () => { recIndicator.style.display = "none"; },
+    onDone: (blob) => { recordedBlob = blob; },
+    fallbackMs: 8000,
+  });
+}
+
+function succeed() {
+  if (resolving) return;
+  resolving = true;
+  snap = { start: performance.now() };
+  count++; combo++;
+  mascot.cheer();
+  spawnGrade(grades, dims.w / 2, dims.h * 0.52, combo);
+  if (combo > maxCombo) { maxCombo = combo; comboShot.capture(canvas); }
+  autoDiff.reportCorrect();
+  autoRec.trigger();
+  shake.trigger(8, 180);
+  spawnSparkles(sparks, dims.w / 2, blockY(), 26, ["#fff", CUTE.sun, CUTE.green]);
+  spawnConfetti(confetti, dims.w / 2, blockY(), 40);
+  spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.44, `🤾 침투 성공! ${count}개`, CUTE.sun);
+  if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
+  setTimeout(() => { if (state === "playing") newRound(); }, 850);
+}
+
+function fail(x, y, msg) {
+  if (resolving) return;
+  resolving = true;
+  combo = 0;
+  mascot.oops();
+  autoDiff.reportWrong();
+  shake.trigger(4, 150);
+  flashUntil = performance.now() + 450;
+  spawnPopup(popups, x, y, msg, CUTE.red);
+  if (!isMuted()) sound.fizzle();
+  setTimeout(() => { if (state === "playing") newRound(); }, 800);
+}
+
+function endGame() {
+  state = "result";
+  const { medal, label } = medalFor(count, MEDALS);
+  const prev = HighScore.get(UNIT);
+  const best = Math.max(count, prev ? prev.count : 0);
+  const isNewRecord = count > 0 && (!prev || count > prev.count);
+  const earned = Coins.earn(medal, maxCombo);
+  Coins.add(earned);
+  if (!prev || count >= prev.count) {
+    HighScore.set(UNIT, { count, bestLevel: autoDiff.level, label: `${medal} ${count}${RECORD_SUFFIX}`, at: Date.now() });
+  }
+
+  const shot = comboShot.captured ? comboShot : fallbackShot;
+  const previewVideo = document.getElementById("previewVideo");
+  const saveVideoBtn = document.getElementById("saveVideoBtn");
+  if (recordedBlob) {
+    previewVideo.src = URL.createObjectURL(recordedBlob);
+    previewVideo.style.display = "block";
+    saveVideoBtn.style.display = "inline-block";
+  }
+  document.getElementById("savePhotoBtn").onclick = async () => {
+    const blob = await shot.toBlob((c, w, h) => drawPhotoOverlay(c, w, h, { title: TITLE, record: count + RECORD_SUFFIX, medal }));
+    downloadBlob(blob, `수학체육올림픽_사각형패스_${formatFileTimestamp()}.png`);
+  };
+  document.getElementById("saveVideoBtn").onclick = () => {
+    if (recordedBlob) downloadBlob(recordedBlob, `수학체육올림픽_사각형패스_${formatFileTimestamp()}.${recorder.extension}`);
+  };
+  showResult({
+    panel: document.getElementById("resultPanel"),
+    medalEl: document.getElementById("resultMedal"),
+    titleEl: document.getElementById("resultTitle"),
+    ribbonEl: document.getElementById("recordRibbon"),
+    coinEl: document.getElementById("coinEarn"),
+    medal, title: `${label}!`,
+    stats: [
+      { el: document.getElementById("statCount"), value: count, suffix: "개" },
+      { el: document.getElementById("statBest"), value: best, suffix: "개" },
+      { el: document.getElementById("statCombo"), value: maxCombo, prefix: "🔥" },
+    ],
+    newRecord: isNewRecord,
+    coins: earned,
+    sound, muted: isMuted(),
+  });
+}
+
+document.getElementById("retryBtn").addEventListener("click", () => {
+  document.getElementById("resultPanel").style.display = "none";
+  document.getElementById("raisePanel").style.display = "flex";
+  startGate.since = 0; startGate.ready = false; holdFill.style.width = "0%";
+  state = "raise";
+});
+
+document.getElementById("raisePanel").addEventListener("click", () => {
+  if (state === "raise" && mode !== "motion") goReady();
+});
+
+// -------------------- 사각형 그리기 --------------------
+// 각도·길이를 숫자로 적어주지 않고, 같은 길이 변의 눈금과 직각 표시만으로 판단하게 한다.
+function drawQuad(ctx, shape, cx, cy, R, rotDeg, fill, opts = {}) {
+  const rot = (rotDeg * Math.PI) / 180;
+  const p = shape.pts.map(([x, y]) => ({
+    x: cx + (x * Math.cos(rot) - y * Math.sin(rot)) * R,
+    y: cy + (x * Math.sin(rot) + y * Math.cos(rot)) * R,
+  }));
+  const lw = Math.max(3, R * 0.1);
+  ctx.save();
+  ctx.lineJoin = "round";
+  if (opts.ghost) {
+    ctx.beginPath();
+    p.forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y)));
+    ctx.closePath();
+    ctx.setLineDash([R * 0.16, R * 0.12]);
+    ctx.strokeStyle = fill;
+    ctx.lineWidth = lw * 0.8;
+    ctx.stroke();
+    ctx.restore();
+    return p;
+  }
+  ctx.beginPath();
+  p.forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y + lw) : ctx.lineTo(q.x, q.y + lw)));
+  ctx.closePath();
+  ctx.fillStyle = "rgba(29,43,77,0.35)";
+  ctx.fill();
+
+  ctx.beginPath();
+  p.forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y)));
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.strokeStyle = CUTE.ink;
+  ctx.lineWidth = lw;
+  ctx.stroke();
+
+  // 같은 길이의 변 눈금
+  const len = shape.pts.map((_, i) => {
+    const a = shape.pts[i], b = shape.pts[(i + 1) % 4];
+    return Math.hypot(a[0] - b[0], a[1] - b[1]);
+  });
+  const groups = [];
+  len.forEach((s, i) => {
+    const g = groups.find((gr) => Math.abs(gr.len - s) < 0.02);
+    if (g) g.idx.push(i); else groups.push({ len: s, idx: [i] });
+  });
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = Math.max(2, R * 0.055);
+  ctx.lineCap = "round";
+  groups.forEach((g, gi) => {
+    if (g.idx.length < 2) return;
+    for (const si of g.idx) {
+      const a = p[si], b = p[(si + 1) % 4];
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const ux = b.x - a.x, uy = b.y - a.y;
+      const L = Math.hypot(ux, uy) || 1;
+      const nx = -uy / L, ny = ux / L;
+      const ticks = gi + 1;
+      for (let t = 0; t < ticks; t++) {
+        const off = (t - (ticks - 1) / 2) * R * 0.12;
+        const px = mx + (ux / L) * off, py = my + (uy / L) * off;
+        ctx.beginPath();
+        ctx.moveTo(px - nx * R * 0.085, py - ny * R * 0.085);
+        ctx.lineTo(px + nx * R * 0.085, py + ny * R * 0.085);
+        ctx.stroke();
+      }
+    }
+  });
+
+  // 직각 표시
+  for (let i = 0; i < 4; i++) {
+    const v = shape.pts[i], a = shape.pts[(i + 3) % 4], b = shape.pts[(i + 1) % 4];
+    const u1 = [a[0] - v[0], a[1] - v[1]], u2 = [b[0] - v[0], b[1] - v[1]];
+    const n1 = Math.hypot(u1[0], u1[1]), n2 = Math.hypot(u2[0], u2[1]);
+    const cos = (u1[0] * u2[0] + u1[1] * u2[1]) / (n1 * n2);
+    if (Math.abs(cos) > 0.03) continue;
+    const V = p[i], A = p[(i + 3) % 4], B = p[(i + 1) % 4];
+    const d1 = { x: (A.x - V.x) / Math.hypot(A.x - V.x, A.y - V.y), y: (A.y - V.y) / Math.hypot(A.x - V.x, A.y - V.y) };
+    const d2 = { x: (B.x - V.x) / Math.hypot(B.x - V.x, B.y - V.y), y: (B.y - V.y) / Math.hypot(B.x - V.x, B.y - V.y) };
+    const s = R * 0.2;
+    ctx.beginPath();
+    ctx.moveTo(V.x + d1.x * s, V.y + d1.y * s);
+    ctx.lineTo(V.x + d1.x * s + d2.x * s, V.y + d1.y * s + d2.y * s);
+    ctx.lineTo(V.x + d2.x * s, V.y + d2.y * s);
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = Math.max(2, R * 0.05);
+    ctx.stroke();
+  }
+  ctx.restore();
+  return p;
+}
+
+function loop(tsMs) {
+  requestAnimationFrame(loop);
+  if (mode === "motion" && video.readyState < 2) return;
+  const { ctx, w, h } = dims;
+  ctx.save();
+  shake.apply(ctx);
+  if (mode === "motion") drawMirroredVideo(ctx, video, w, h);
+  else drawFallbackBackground(ctx, w, h);
+  drawDrifters(ctx, drifters, dims, 1 / 60);
+  drawBunting(ctx, dims);
+
+  let result = null;
+  if (mode === "motion") result = poseTracker.detect(video, tsMs);
+  body.update(result, w, h, video, pointerInput);
+  if (mode === "motion" && state === "raise") {
+    if (startGate.update(tsMs, body.isReady())) goReady();
+  }
+  cursors = body.cursors();
+
+  if (state === "playing") stepGame();
+  if (mode === "motion") drawSkeleton(ctx, body.joints, { color: CUTE.sun, lineWidth: fluidPx(dims, 7, { min: 5, max: 10 }) });
+
+  if (state === "playing" || state === "raise") {
+    grades = updateGrades(grades);
+    drawGrades(ctx, grades, dims, fluidPx);
+    if (state === "playing") mascot.draw(ctx, dims, fluidPx);
+    drawPoseHint(ctx, dims, fluidPx, poseHint(body, mode));
+  }
+
+  for (const c of cursors) drawGloveCursor(ctx, c.x, c.y, fluidPx(dims, 44, { min: 32, max: 62 }), { active: phase === "turn" });
+  ctx.restore();
+}
+
+function goReady() {
+  state = "ready";
+  document.getElementById("raisePanel").style.display = "none";
+  document.getElementById("readyPanel").style.display = "flex";
+  if (!isMuted()) sound.click();
+  setTimeout(async () => {
+    document.getElementById("readyPanel").style.display = "none";
+    await showRuleCard(document.getElementById("rulePanel"), RULE);
+    startCountdown();
+  }, 500);
+}
+
+function drawTopPanel(ctx, remain) {
+  drawHudPanel(ctx, dims, fluidPx, {
+    left: phase === "pick" ? "① 조건에 맞는 조각 잡기" : "② 몸을 돌려 각도 맞추기",
+    right: `🔥 ${combo}   🏅 ${count}개   ⏱ ${Math.ceil(remain / 1000)}초`,
+    headline: phase === "pick" ? round.cond.text : `${round.dir < 0 ? "왼쪽" : "오른쪽"}으로 ${round.turn}° 돌리기!`,
+  });
+}
+
+// 수비 블록 — 가운데 빈틈으로만 패스가 들어간다.
+// 밋밋한 회색 띠 대신 통통한 블록을 줄지어 쌓고, 가운데 블록에는 찡그린 표정을 붙였다.
+function drawBlockWall(ctx, gapW) {
+  const { w } = dims;
+  const y = blockY();
+  const th = fluidPx(dims, 34, { min: 26, max: 50 });
+  const sides = [
+    { x0: 0, x1: w / 2 - gapW / 2 },
+    { x0: w / 2 + gapW / 2, x1: w },
+  ];
+  for (const s of sides) {
+    const span = s.x1 - s.x0;
+    if (span <= 0) continue;
+    const n = Math.max(2, Math.round(span / (th * 1.5)));
+    const bw = span / n;
+    for (let i = 0; i < n; i++) {
+      const cx = s.x0 + bw * (i + 0.5);
+      drawStickerRect(ctx, cx, y, bw * 0.94, th, th * 0.28, i % 2 ? CUTE.blueDark : CUTE.blue, {
+        lineWidth: Math.max(3, th * 0.13), drop: Math.max(3, th * 0.12),
+      });
+    }
+    // 빈틈에 가장 가까운 블록만 표정을 지어 "여기를 막고 있다"가 읽히게 한다
+    const guard = s.x0 === 0 ? s.x1 - bw * 0.5 : s.x0 + bw * 0.5;
+    drawMood(ctx, guard, y, th * 0.42, "sad");
+  }
+}
+
+// 몸을 얼마나 돌렸는지 보여주는 회전 다이얼
+function drawTurnDial(ctx, cx, cy, R, targetDeg, curDeg, ok) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(29,43,77,0.42)"; ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.6)"; ctx.lineWidth = Math.max(2, R * 0.05); ctx.stroke();
+
+  // 45° 눈금
+  ctx.strokeStyle = "rgba(255,255,255,0.5)";
+  ctx.lineWidth = Math.max(1.5, R * 0.03);
+  for (let d = 0; d < 360; d += 45) {
+    const a = (d - 90) * Math.PI / 180;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a) * R * 0.82, Math.sin(a) * R * 0.82);
+    ctx.lineTo(Math.cos(a) * R, Math.sin(a) * R);
+    ctx.stroke();
+  }
+  // 목표
+  const ta = (targetDeg - 90) * Math.PI / 180;
+  ctx.strokeStyle = ok ? CUTE.green : CUTE.sun;
+  ctx.lineWidth = Math.max(4, R * 0.11);
+  ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(ta) * R * 0.92, Math.sin(ta) * R * 0.92); ctx.stroke();
+  // 현재
+  const ca = (curDeg - 90) * Math.PI / 180;
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = Math.max(3, R * 0.07);
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(ca) * R * 0.78, Math.sin(ca) * R * 0.78); ctx.stroke();
+  ctx.restore();
+}
+
+function stepGame() {
+  const { ctx, w, h } = dims;
+  const now = performance.now();
+  const dt = Math.min(0.06, (now - lastFrameAt) / 1000);
+  lastFrameAt = now;
+  const remain = Math.max(0, playEndAt - now);
+  if (remain <= 0) { endGame(); return; }
+  const armed = now - roundAt > 550;
+  const R = pieceR();
+  const gapW = R * 2.6;
+
+  if (phase === "pick" && armed && !resolving) {
+    let best = null, bestD = Infinity;
+    for (const c of cursors) {
+      for (const s of slots) {
+        const d = Math.hypot(c.x - s.x, c.y - s.y);
+        if (d < s.R * 1.1 && d < bestD) { bestD = d; best = s; }
+      }
+    }
+    if (best) {
+      if (best.shape.key === round.answerKey) {
+        chosen = best;
+        phase = "turn"; pieceDeg = 0; matchSince = 0;
+        roundAt = now;
+        spawnSparkles(sparks, best.x, best.y, 14, ["#fff", CUTE.sun]);
+        spawnPopup(popups, best.x, best.y - best.R, "잡았다! 이제 돌리기", CUTE.green);
+        if (!isMuted()) sound.pop();
+      } else {
+        fail(best.x, best.y - best.R, "조건을 다시 봐요!");
+        return;
+      }
+    }
+  } else if (phase === "turn" && !resolving) {
+    // 몸통을 돌린 만큼 조각이 돌아간다. 각속도로 다루면 조금씩 미세 조정할 수 있어 맞추기 쉽다.
+    const turn = body.torsoTurn();
+    if (Math.abs(turn) > 0.12) pieceDeg += turn * 150 * dt;
+    pieceDeg = ((pieceDeg % 360) + 360) % 360;
+    const target = ((round.dir > 0 ? round.turn : 360 - round.turn) % 360 + 360) % 360;
+    let diff = Math.abs(((pieceDeg - target + 540) % 360) - 180);
+    const ok = diff <= 11;
+    if (armed && ok) {
+      if (!matchSince) matchSince = now;
+      if (now - matchSince > 400) { succeed(); return; }
+    } else {
+      matchSince = 0;
+    }
+  }
+
+  drawBlockWall(ctx, gapW);
+  drawTopPanel(ctx, remain);
+
+  if (phase === "pick") {
+    for (const s of slots) {
+      const by = bob(1.5, s.R * 0.05, s.idx);
+      drawQuad(ctx, s.shape, s.x, s.y + by, s.R, 0, s.color);
+      drawMood(ctx, s.x, s.y + by, s.R * 0.38, "idle");
+    }
+    drawChunkyText(ctx, "조건에 맞는 사각형 조각을 손으로 잡아요!", w / 2, h * 0.92,
+      fluidPx(dims, 16, { min: 12, max: 21 }), "#ffffff",
+      { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) });
+  } else {
+    const target = ((round.dir > 0 ? round.turn : 360 - round.turn) % 360 + 360) % 360;
+    const diff = Math.abs(((pieceDeg - target + 540) % 360) - 180);
+    const ok = diff <= 11;
+
+    // 빈틈에 목표 방향이 점선으로 떠 있어서, 어디까지 돌려야 하는지 눈으로 보인다
+    drawQuad(ctx, chosen.shape, w / 2, blockY(), R, target, ok ? CUTE.green : "#ffffff", { ghost: true });
+
+    // 각도가 맞으면 조각이 자석처럼 빈틈으로 빨려 들어간다
+    let px = w / 2, py = h * 0.62;
+    if (snap) {
+      const t = Math.min(1, (now - snap.start) / 420);
+      const e = 1 - Math.pow(1 - t, 3);
+      py = h * 0.62 + (blockY() - h * 0.62) * e;
+    }
+    drawQuad(ctx, chosen.shape, px, py, R, pieceDeg, ok ? CUTE.green : chosen.color);
+    drawMood(ctx, px, py, R * 0.34, ok ? "happy" : "wow");
+
+    drawTurnDial(ctx, w * 0.86, h * 0.62, Math.min(w, h) * 0.10, target, pieceDeg, ok);
+
+    drawChunkyText(
+      ctx,
+      mode === "motion" ? "몸을 기울여 조각을 돌려요!" : "화면을 좌우로 끌어 조각을 돌려요!",
+      w / 2, h * 0.86, fluidPx(dims, 16, { min: 12, max: 21 }), "#ffffff",
+      { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) },
+    );
+    drawChunkyText(ctx, `${Math.round(pieceDeg)}°`, w / 2, h * 0.92,
+      fluidPx(dims, 24, { min: 17, max: 32 }), ok ? CUTE.green : CUTE.sun,
+      { outline: CUTE.ink, outlineWidth: fluidPx(dims, 6, { min: 4, max: 8 }) });
+  }
+
+  if (now < flashUntil) {
+    ctx.save();
+    ctx.fillStyle = "rgba(255,107,107,0.18)";
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
+
+  confetti = updateConfetti(confetti, dt); drawConfetti(ctx, confetti);
+  sparks = updateSparkles(sparks, dt); drawSparkles(ctx, sparks);
+  popups = updatePopups(popups, dt); drawPopups(ctx, popups);
+  bigPopups = updateBigPopups(bigPopups, dt); drawBigPopups(ctx, bigPopups);
+
+  drawVignette(ctx, w, h, 0.16);
+  drawTimeUrgency(ctx, dims, fluidPx, remain);
+  drawLevelStars(ctx, dims, autoDiff.level, fluidPx);
+}
+
+init();
+</script>
+</body>
+</html>
