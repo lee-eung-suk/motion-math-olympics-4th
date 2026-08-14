@@ -332,3 +332,68 @@ export function drawPoseHint(ctx, dims, fluidPx, text) {
   });
   ctx.restore();
 }
+
+// -------------------- 피버 타임 --------------------
+// 3연속 정답이면 8초 동안 화면이 달아오르고 코인이 2배가 된다.
+// 피버 중에 틀리면 즉시 꺼지므로, 잘하는 아이에게 "지키고 싶은 것"이 생긴다.
+export class Fever {
+  constructor(need = 3, ms = 8000) { this.need = need; this.ms = ms; this.until = 0; }
+  get on() { return performance.now() < this.until; }
+  hit(combo) { if (combo >= this.need) this.until = performance.now() + this.ms; }
+  reset() { this.until = 0; }
+}
+
+// 화면 테두리가 무지개로 달아오른다. 게임 내용을 가리지 않도록 가장자리에만 그린다.
+export function drawFeverFrame(ctx, dims, fever, fluidPx) {
+  if (!fever || !fever.on) return;
+  const { w, h } = dims;
+  const t = performance.now() / 1000;
+  const left = fever.until - performance.now();
+  const fade = left < 900 ? Math.max(0, left / 900) : 1;
+  const th = fluidPx(dims, 16, { min: 10, max: 26 });
+
+  ctx.save();
+  ctx.globalAlpha = (0.55 + Math.abs(Math.sin(t * 4)) * 0.35) * fade;
+  const grad = ctx.createLinearGradient(0, 0, w, h);
+  for (let i = 0; i <= 6; i++) {
+    grad.addColorStop(i / 6, `hsl(${((t * 90 + i * 60) % 360)}, 95%, 62%)`);
+  }
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = th;
+  ctx.strokeRect(th / 2, th / 2, w - th, h - th);
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalAlpha = fade;
+  drawChunkyText(ctx, "🔥 FEVER!", w / 2, h - th * 1.9, fluidPx(dims, 22, { min: 15, max: 30 }),
+    `hsl(${(t * 120) % 360}, 95%, 65%)`, { outline: CUTE.ink, outlineWidth: fluidPx(dims, 6, { min: 4, max: 8 }) });
+  ctx.restore();
+}
+
+// -------------------- 오답 뒤 정답 알려주기 --------------------
+// 틀린 순간이 가장 잘 배우는 순간이다. 정답 자리에 초록 링과 이름표를 잠깐 띄운다.
+// 문제는 매번 새로 생성되므로 "외워서 맞히는" 일은 생기지 않는다.
+export function drawAnswerRing(ctx, dims, fluidPx, x, y, r, label) {
+  const t = performance.now() / 220;
+  const pulse = 1 + Math.sin(t) * 0.06;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, r * pulse, 0, Math.PI * 2);
+  ctx.strokeStyle = CUTE.green;
+  ctx.lineWidth = fluidPx(dims, 7, { min: 5, max: 11 });
+  ctx.setLineDash([r * 0.34, r * 0.24]);
+  ctx.stroke();
+  ctx.restore();
+  if (label) {
+    drawChunkyText(ctx, label, x, y - r * 1.35, fluidPx(dims, 19, { min: 13, max: 25 }), CUTE.green,
+      { outline: CUTE.ink, outlineWidth: fluidPx(dims, 6, { min: 4, max: 8 }) });
+  }
+}
+
+// 오답 표시 상태를 게임마다 똑같이 다루기 위한 작은 그릇
+export class Reveal {
+  constructor(ms = 1150) { this.ms = ms; this.until = 0; this.data = null; }
+  show(data) { this.data = data; this.until = performance.now() + this.ms; }
+  clear() { this.until = 0; this.data = null; }
+  get on() { return performance.now() < this.until && !!this.data; }
+}

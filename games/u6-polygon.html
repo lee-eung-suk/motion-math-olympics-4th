@@ -95,6 +95,7 @@ import {
   ensureFont, Coins, Mascot, drawMood, spawnGrade, updateGrades, drawGrades,
   showRuleCard, showStartStamp, showResult, hudBand, drawHudPanel,
   drawTimeUrgency, poseHint, drawPoseHint,
+  Fever, drawFeverFrame, drawAnswerRing, Reveal,
 } from "../js/party.js?v=1";
 requestWakeLock();
 
@@ -261,6 +262,9 @@ let round, rollers, roundAt, resolving, flashUntil = 0;
 let popups = [], bigPopups = [], confetti = [], sparks = [];
 const shake = new ScreenShake();
 const mascot = new Mascot();
+const fever = new Fever();      // 3연속 정답이면 8초 피버
+const reveal = new Reveal();    // 오답 뒤 정답을 잠깐 보여주는 상태
+let feverBonus = 0;             // 피버 중에 맞힌 만큼 붙는 코인
 let grades = [];
 let recorder, comboShot, fallbackShot, autoRec, recordedBlob = null;
 const recIndicator = document.getElementById("recIndicator");
@@ -388,6 +392,7 @@ function beginPlay() {
   const prev = HighScore.get(UNIT);
   autoDiff = new AutoDifficulty(levelFromUrl(AutoDifficulty.startLevelFromHighScore(prev)));
   count = 0; combo = 0; maxCombo = 0;
+  fever.reset(); reveal.clear(); feverBonus = 0;
   popups = []; bigPopups = []; confetti = []; sparks = [];
   playEndAt = performance.now() + 60000;
   lastFrameAt = performance.now();
@@ -425,6 +430,8 @@ function succeed(r) {
 
   count++; combo++;
   mascot.cheer();
+  fever.hit(combo);
+  if (fever.on) feverBonus += 2;
   spawnGrade(grades, dims.w / 2, dims.h * 0.52, combo);
   if (combo > maxCombo) { maxCombo = combo; comboShot.capture(canvas); }
   autoDiff.reportCorrect();
@@ -439,7 +446,7 @@ function succeed(r) {
   // 체조 경기처럼 심판이 점수판을 든다 — 콤보가 높을수록 점수도 올라간다
   spawnBigPopup(bigPopups, ringPos().x, ringPos().y + dims.h * 0.14, `🐻 ${Math.min(10, 8 + combo * 0.4).toFixed(1)}`, CUTE.green);
   if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
-  setTimeout(() => { if (state === "playing") newRound(); }, 800);
+  setTimeout(() => { if (state === "playing") newRound(); }, 700);
 }
 
 function fail(x, y, msg) {
@@ -447,12 +454,15 @@ function fail(x, y, msg) {
   resolving = true;
   combo = 0;
   mascot.oops();
+  fever.reset();
   autoDiff.reportWrong();
   shake.trigger(4, 150);
   flashUntil = performance.now() + 450;
+  const ans = rollers.find((r) => r.poly === round.answer);
+  if (ans) reveal.show({ roller: ans, label: (ans.poly.regular ? "정" : "") + NAMES[ans.poly.n] });
   spawnPopup(popups, x, y, msg, CUTE.red);
   if (!isMuted()) sound.fizzle();
-  setTimeout(() => { if (state === "playing") newRound(); }, 800);
+  setTimeout(() => { if (state === "playing") newRound(); }, 1400);
 }
 
 function endGame() {
@@ -461,7 +471,7 @@ function endGame() {
   const prev = HighScore.get(UNIT);
   const best = Math.max(count, prev ? prev.count : 0);
   const isNewRecord = count > 0 && (!prev || count > prev.count);
-  const earned = Coins.earn(medal, maxCombo);
+  const earned = Coins.earn(medal, maxCombo) + feverBonus;
   Coins.add(earned);
   if (!prev || count >= prev.count) {
     HighScore.set(UNIT, { count, bestLevel: autoDiff.level, label: `${medal} ${count}${RECORD_SUFFIX}`, at: Date.now() });
@@ -597,6 +607,8 @@ function loop(tsMs) {
     drawPoseHint(ctx, dims, fluidPx, poseHint(body, mode));
   }
 
+  if (state === "playing") drawFeverFrame(ctx, dims, fever, fluidPx);
+
   for (const c of cursors) drawGloveCursor(ctx, c.x, c.y, fluidPx(dims, 44, { min: 32, max: 62 }), { active: false });
   ctx.restore();
 }
@@ -644,6 +656,21 @@ function stepGame() {
       // 미끄러지지 않고 구르는 것처럼 — 가로로 움직인 만큼 돈다
       r.rot += (r.vx * dt) / r.R;
     }
+    // 도형끼리 부딪히면 서로 밀어내며 튕긴다 — 매트 위가 살아 있는 느낌
+    for (let i = 0; i < rollers.length; i++) {
+      for (let j = i + 1; j < rollers.length; j++) {
+        const a = rollers[i], b2 = rollers[j];
+        const dx = b2.x - a.x, dy = b2.y - a.y;
+        const d = Math.hypot(dx, dy), minD = (a.R + b2.R) * 0.9;
+        if (d < 1e-3 || d >= minD) continue;
+        const nx = dx / d, ny = dy / d, push = (minD - d) / 2;
+        a.x -= nx * push; a.y -= ny * push;
+        b2.x += nx * push; b2.y += ny * push;
+        const avn = a.vx * nx + a.vy * ny, bvn = b2.vx * nx + b2.vy * ny;
+        a.vx += (bvn - avn) * nx; a.vy += (bvn - avn) * ny;
+        b2.vx += (avn - bvn) * nx; b2.vy += (avn - bvn) * ny;
+      }
+    }
   }
 
   if (armed && !resolving) {
@@ -676,9 +703,21 @@ function stepGame() {
   ctx.restore();
 
   for (const r of rollers) {
-    drawPoly(ctx, r.poly, r.x, r.y, r.R, r.rot, r.color);
+    // 손이 가까이 오면 살짝 커지며 반응한다 — 어느 걸 잡으려는지 눈으로 확인된다
+    let near = 0;
+    for (const c of cursors) {
+      const d = Math.hypot(c.x - r.x, c.y - r.y);
+      if (d < r.R * 1.8) near = Math.max(near, 1 - d / (r.R * 1.8));
+    }
+    const rr = r.R * (1 + near * 0.14);
+    drawPoly(ctx, r.poly, r.x, r.y, rr, r.rot, r.color);
     // 도형은 데굴데굴 구르지만 얼굴은 늘 정면을 본다 — 이 종목에서 가장 귀여운 부분이다
-    drawMood(ctx, r.x, r.y, r.R * 0.42, "idle");
+    drawMood(ctx, r.x, r.y, rr * 0.42, near > 0.4 ? "wow" : "idle");
+  }
+
+  if (reveal.on) {
+    const r = reveal.data.roller;
+    drawAnswerRing(ctx, dims, fluidPx, r.x, r.y, r.R * 1.2, reveal.data.label);
   }
 
   if (now < flashUntil) {

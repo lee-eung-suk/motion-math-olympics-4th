@@ -96,13 +96,14 @@ import {
   ensureFont, Coins, Mascot, drawMood, spawnGrade, updateGrades, drawGrades,
   showRuleCard, showStartStamp, showResult, hudBand, drawHudPanel,
   drawTimeUrgency, poseHint, drawPoseHint,
+  Fever, drawFeverFrame, drawAnswerRing, Reveal,
 } from "../js/party.js?v=1";
 requestWakeLock();
 
 const UNIT = "g2";
 const TITLE = "삼각형 균형 버티기";
 const RECORD_SUFFIX = "개";
-const MEDALS = { bronze: 3, silver: 5, gold: 7 };
+const MEDALS = { bronze: 4, silver: 7, gold: 10 };
 const mode = InputMode.get();
 const RULE = { emoji: "🤸", title: "삼각형 균형 버티기", rule: "조건에 맞는 삼각형을 짚고, 그 삼각형의 가장 큰 각을 양팔로 만들어 버텨요!" };
 
@@ -248,10 +249,13 @@ const startGate = new StartGate(mode, holdFill);
 
 let autoDiff, count, combo, maxCombo, playEndAt;
 let round, slots, phase, chosen, roundAt, resolving, flashUntil = 0;
-let hold = new AngleHold(1500, 14);
+let hold = new AngleHold(1200, 14);
 let popups = [], bigPopups = [], confetti = [], sparks = [];
 const shake = new ScreenShake();
 const mascot = new Mascot();
+const fever = new Fever();      // 3연속 정답이면 8초 피버
+const reveal = new Reveal();    // 오답 뒤 정답을 잠깐 보여주는 상태
+let feverBonus = 0;             // 피버 중에 맞힌 만큼 붙는 코인
 let grades = [];
 let recorder, comboShot, fallbackShot, autoRec, recordedBlob = null;
 const recIndicator = document.getElementById("recIndicator");
@@ -314,6 +318,7 @@ function beginPlay() {
   const prev = HighScore.get(UNIT);
   autoDiff = new AutoDifficulty(levelFromUrl(AutoDifficulty.startLevelFromHighScore(prev)));
   count = 0; combo = 0; maxCombo = 0;
+  fever.reset(); reveal.clear(); feverBonus = 0;
   popups = []; bigPopups = []; confetti = []; sparks = [];
   playEndAt = performance.now() + 60000;
   lastFrameAt = performance.now();
@@ -339,6 +344,8 @@ function succeed() {
   resolving = true;
   count++; combo++;
   mascot.cheer();
+  fever.hit(combo);
+  if (fever.on) feverBonus += 2;
   spawnGrade(grades, dims.w / 2, dims.h * 0.52, combo);
   if (combo > maxCombo) { maxCombo = combo; comboShot.capture(canvas); }
   autoDiff.reportCorrect();
@@ -348,7 +355,7 @@ function succeed() {
   spawnConfetti(confetti, dims.w / 2, dims.h * 0.3, 38);
   spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.34, `🤸 성공! ${count}개`, CUTE.sun);
   if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
-  setTimeout(() => { if (state === "playing") newRound(); }, 850);
+  setTimeout(() => { if (state === "playing") newRound(); }, 700);
 }
 
 function fail(x, y, msg) {
@@ -356,12 +363,14 @@ function fail(x, y, msg) {
   resolving = true;
   combo = 0;
   mascot.oops();
+  fever.reset();
   autoDiff.reportWrong();
   shake.trigger(4, 150);
   flashUntil = performance.now() + 450;
+  reveal.show({ idx: round.answerIdx, label: round.cond.text });
   spawnPopup(popups, x, y, msg, CUTE.red);
   if (!isMuted()) sound.fizzle();
-  setTimeout(() => { if (state === "playing") newRound(); }, 800);
+  setTimeout(() => { if (state === "playing") newRound(); }, 1400);
 }
 
 function endGame() {
@@ -370,7 +379,7 @@ function endGame() {
   const prev = HighScore.get(UNIT);
   const best = Math.max(count, prev ? prev.count : 0);
   const isNewRecord = count > 0 && (!prev || count > prev.count);
-  const earned = Coins.earn(medal, maxCombo);
+  const earned = Coins.earn(medal, maxCombo) + feverBonus;
   Coins.add(earned);
   if (!prev || count >= prev.count) {
     HighScore.set(UNIT, { count, bestLevel: autoDiff.level, label: `${medal} ${count}${RECORD_SUFFIX}`, at: Date.now() });
@@ -548,6 +557,8 @@ function loop(tsMs) {
     drawPoseHint(ctx, dims, fluidPx, poseHint(body, mode));
   }
 
+  if (state === "playing") drawFeverFrame(ctx, dims, fever, fluidPx);
+
   for (const c of cursors) drawGloveCursor(ctx, c.x, c.y, fluidPx(dims, 44, { min: 32, max: 62 }), { active: phase === "hold" });
   }
   ctx.restore();
@@ -617,7 +628,8 @@ function stepGame() {
   const armed = now - roundAt > 550;
 
   // 단계가 오를수록 평균대가 크게 흔들려 삼각형이 더 많이 움직인다
-  const swayAmp = 0.5 + autoDiff.level * 0.55;
+  // 버티는 동안 흔들림이 점점 커진다 — 진짜로 균형을 잡는 느낌
+  const swayAmp = (0.5 + autoDiff.level * 0.55) * (phase === "hold" ? 1 + hold.progress * 1.1 : 1);
   const sway = Math.sin(now / 900) * swayAmp;
   const swayPx = sway * w * 0.035;
 
@@ -663,6 +675,10 @@ function stepGame() {
       drawTriangle(ctx, s.tri, s.x, s.y + by, s.R, s.rot + sway * 0.05, s.color);
       // 표정은 도형이 돌아가도 항상 정면을 본다 — 이게 있어야 "도형"이 아니라 "친구"로 보인다
       drawMood(ctx, s.x, s.y + by, s.R * 0.40, "idle");
+    }
+    if (reveal.on) {
+      const s = slots[reveal.data.idx];
+      drawAnswerRing(ctx, dims, fluidPx, s.x, s.y, s.R * 1.15, reveal.data.label);
     }
     drawChunkyText(ctx, "평균대 위에서 조건에 맞는 삼각형을 짚어요!", w / 2, h * 0.60,
       fluidPx(dims, 16, { min: 12, max: 21 }), "#ffffff",

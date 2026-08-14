@@ -95,6 +95,7 @@ import {
   ensureFont, Coins, Mascot, drawMood, spawnGrade, updateGrades, drawGrades,
   showRuleCard, showStartStamp, showResult, hudBand, drawHudPanel,
   drawTimeUrgency, poseHint, drawPoseHint,
+  Fever, drawFeverFrame, drawAnswerRing, Reveal,
 } from "../js/party.js?v=1";
 requestWakeLock();
 
@@ -229,9 +230,13 @@ const startGate = new StartGate(mode, holdFill);
 let autoDiff, count, combo, maxCombo, playEndAt;
 let round, plot, roundAt, resolving, flashUntil = 0;
 let goalFx = null; // 정답 순간의 대형 골인 연출 { start, from }
+let hover = null;  // 손이 올라가 있는 점·구간 (짚기 전에 미리 보여준다)
 let popups = [], bigPopups = [], confetti = [], sparks = [];
 const shake = new ScreenShake();
 const mascot = new Mascot();
+const fever = new Fever();      // 3연속 정답이면 8초 피버
+const reveal = new Reveal();    // 오답 뒤 정답을 잠깐 보여주는 상태
+let feverBonus = 0;             // 피버 중에 맞힌 만큼 붙는 코인
 let grades = [];
 let recorder, comboShot, fallbackShot, autoRec, recordedBlob = null;
 const recIndicator = document.getElementById("recIndicator");
@@ -266,6 +271,7 @@ function newRound() {
   layoutGraph();
   resolving = false;
   goalFx = null;
+  hover = null;
   roundAt = performance.now();
 }
 
@@ -296,6 +302,7 @@ function beginPlay() {
   const prev = HighScore.get(UNIT);
   autoDiff = new AutoDifficulty(levelFromUrl(AutoDifficulty.startLevelFromHighScore(prev)));
   count = 0; combo = 0; maxCombo = 0;
+  fever.reset(); reveal.clear(); feverBonus = 0;
   popups = []; bigPopups = []; confetti = []; sparks = [];
   playEndAt = performance.now() + 60000;
   lastFrameAt = performance.now();
@@ -321,6 +328,8 @@ function succeed(x, y) {
   resolving = true;
   count++; combo++;
   mascot.cheer();
+  fever.hit(combo);
+  if (fever.on) feverBonus += 2;
   spawnGrade(grades, dims.w / 2, dims.h * 0.22, combo);
   if (combo > maxCombo) { maxCombo = combo; comboShot.capture(canvas); }
   autoDiff.reportCorrect();
@@ -420,12 +429,16 @@ function fail(x, y, msg) {
   resolving = true;
   combo = 0;
   mascot.oops();
+  fever.reset();
   autoDiff.reportWrong();
   shake.trigger(4, 150);
   flashUntil = performance.now() + 450;
+  const list = round.question.kind === "seg" ? plot.segs : plot.pts;
+  const ans = list.find((q) => q.i === round.question.idx);
+  if (ans) reveal.show({ x: ans.x, y: ans.y, r: hitR() * 1.1, label: "여기예요!" });
   spawnPopup(popups, x, y, msg, CUTE.red);
   if (!isMuted()) sound.fizzle();
-  setTimeout(() => { if (state === "playing") newRound(); }, 800);
+  setTimeout(() => { if (state === "playing") newRound(); }, 1400);
 }
 
 function endGame() {
@@ -434,7 +447,7 @@ function endGame() {
   const prev = HighScore.get(UNIT);
   const best = Math.max(count, prev ? prev.count : 0);
   const isNewRecord = count > 0 && (!prev || count > prev.count);
-  const earned = Coins.earn(medal, maxCombo);
+  const earned = Coins.earn(medal, maxCombo) + feverBonus;
   Coins.add(earned);
   if (!prev || count >= prev.count) {
     HighScore.set(UNIT, { count, bestLevel: autoDiff.level, label: `${medal} ${count}${RECORD_SUFFIX}`, at: Date.now() });
@@ -512,6 +525,8 @@ function loop(tsMs) {
     if (state === "playing") mascot.draw(ctx, dims, fluidPx);
     drawPoseHint(ctx, dims, fluidPx, poseHint(body, mode));
   }
+
+  if (state === "playing") drawFeverFrame(ctx, dims, fever, fluidPx);
 
   for (const c of cursors) drawGloveCursor(ctx, c.x, c.y, fluidPx(dims, 44, { min: 32, max: 62 }), { active: !!goalFx });
   ctx.restore();
@@ -603,13 +618,21 @@ function drawGraph(ctx) {
   ctx.fillText(`(${round.topic.yUnit})`, p.x0 + fluidPx(dims, 4, { min: 3, max: 7 }), p.y0 - fluidPx(dims, 8, { min: 6, max: 13 }));
   ctx.restore();
 
-  // 꺾은선
+  // 꺾은선 — 경기 기록이 쌓이듯 왼쪽에서 오른쪽으로 그려진다
+  const grow = Math.min(1, (performance.now() - roundAt) / 620);
+  const segCount = (p.pts.length - 1) * grow;
   ctx.save();
   ctx.lineJoin = "round"; ctx.lineCap = "round";
   ctx.strokeStyle = CUTE.blueDark;
   ctx.lineWidth = fluidPx(dims, 5, { min: 4, max: 8 });
   ctx.beginPath();
-  p.pts.forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y)));
+  ctx.moveTo(p.pts[0].x, p.pts[0].y);
+  for (let i = 1; i < p.pts.length; i++) {
+    const k = Math.min(1, Math.max(0, segCount - (i - 1)));
+    if (k <= 0) break;
+    const a = p.pts[i - 1], b = p.pts[i];
+    ctx.lineTo(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k);
+  }
   ctx.stroke();
   ctx.restore();
 
@@ -617,20 +640,32 @@ function drawGraph(ctx) {
   const R = hitR();
   if (round.question.kind === "seg") {
     for (const s of plot.segs) {
+      const isHover = hover && hover.kind === "seg" && hover.i === s.i;
+      const sr = R * 0.62 * (isHover ? 1.3 : 1);
       ctx.save();
-      ctx.beginPath(); ctx.arc(s.x, s.y, R * 0.62, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(255,209,102,0.55)";
+      ctx.beginPath(); ctx.arc(s.x, s.y, sr, 0, Math.PI * 2);
+      ctx.fillStyle = isHover ? "rgba(255,209,102,0.85)" : "rgba(255,209,102,0.55)";
       ctx.fill();
-      ctx.strokeStyle = CUTE.orangeDark; ctx.lineWidth = 3;
-      ctx.setLineDash([6, 5]); ctx.stroke();
+      ctx.strokeStyle = isHover ? "#ffffff" : CUTE.orangeDark;
+      ctx.lineWidth = isHover ? 4 : 3;
+      ctx.setLineDash(isHover ? [] : [6, 5]); ctx.stroke();
       ctx.restore();
     }
   }
   for (const q of p.pts) {
-    const pr = R * (round.question.kind === "seg" ? 0.3 : 0.42);
+    if (segCount < q.i - 0.05) continue;
+    const pop = Math.min(1, (segCount - (q.i - 1)) * 2.2);
+    const isHover = hover && hover.kind === "point" && hover.i === q.i;
+    const pr = R * (round.question.kind === "seg" ? 0.3 : 0.42) * (0.6 + 0.4 * pop) * (isHover ? 1.3 : 1);
+    if (isHover) {
+      ctx.save();
+      ctx.beginPath(); ctx.arc(q.x, q.y, pr * 1.55, 0, Math.PI * 2);
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = fluidPx(dims, 4, { min: 3, max: 6 });
+      ctx.stroke(); ctx.restore();
+    }
     drawSticker(ctx, q.x, q.y, pr, CUTE.blue, { lineWidth: 3, drop: 2 });
     // 점 문제일 때만 표정을 넣는다 — 구간 문제에서는 점이 작아 얼굴이 뭉개진다
-    if (round.question.kind !== "seg") drawMood(ctx, q.x, q.y, pr * 0.9, "idle");
+    if (round.question.kind !== "seg") drawMood(ctx, q.x, q.y, pr * 0.9, isHover ? "wow" : "idle");
   }
 }
 
@@ -643,6 +678,20 @@ function stepGame() {
   if (remain <= 0) { endGame(); return; }
   const armed = now - roundAt > 550;
   const R = hitR();
+
+  // 손이 올라가 있는 곳을 미리 표시해 준다 — 짚어보기 전에는 아무 표시가 없어 답답했다
+  hover = null;
+  {
+    const targets = round.question.kind === "seg" ? plot.segs : plot.pts;
+    let near = null, nearD = Infinity;
+    for (const c of cursors) {
+      for (const q of targets) {
+        const d = Math.hypot(c.x - q.x, c.y - q.y);
+        if (d < R * 1.6 && d < nearD) { nearD = d; near = q; }
+      }
+    }
+    if (near) hover = { kind: round.question.kind, i: near.i };
+  }
 
   if (armed && !resolving) {
     const targets = round.question.kind === "seg" ? plot.segs : plot.pts;
@@ -661,6 +710,8 @@ function stepGame() {
 
   drawTopPanel(ctx, remain);
   drawGraph(ctx);
+
+  if (reveal.on) drawAnswerRing(ctx, dims, fluidPx, reveal.data.x, reveal.data.y, reveal.data.r, reveal.data.label);
 
   // 정답을 짚으면 화면 전체가 골대가 된다
   drawBigGoal(ctx);

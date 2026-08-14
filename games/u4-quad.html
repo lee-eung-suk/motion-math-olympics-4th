@@ -100,13 +100,14 @@ import {
   ensureFont, Coins, Mascot, drawMood, spawnGrade, updateGrades, drawGrades,
   showRuleCard, showStartStamp, showResult, hudBand, drawHudPanel,
   drawTimeUrgency, poseHint, drawPoseHint,
+  Fever, drawFeverFrame, drawAnswerRing, Reveal,
 } from "../js/party.js?v=1";
 requestWakeLock();
 
 const UNIT = "g4";
 const TITLE = "사각형 뒤집기 패스";
 const RECORD_SUFFIX = "개";
-const MEDALS = { bronze: 4, silver: 6, gold: 9 };
+const MEDALS = { bronze: 5, silver: 8, gold: 11 };
 const mode = InputMode.get();
 const RULE = { emoji: "🤾", title: "사각형 뒤집기 패스", rule: "조건에 맞는 조각을 잡으면 손을 따라와요. 몸을 좌우로 기울여 45°씩 돌린 뒤, 수비 블록의 빈틈으로 가져가면 쏙!" };
 
@@ -223,9 +224,13 @@ let round, slots, phase, chosen, roundAt, resolving, flashUntil = 0;
 let pieceDeg, snap = null;   // snap: 조각이 빈틈으로 빨려 들어가는 연출
 let held = null;             // 손에 들고 있는 조각 { shape, x, y, color }
 let turnLatch = true;        // 45°씩 '딸깍' 한 칸만 돌도록 하는 걸쇠
+let gapX = 0, gapDir = 1;    // 수비 벽의 빈틈이 좌우로 오간다
 let popups = [], bigPopups = [], confetti = [], sparks = [];
 const shake = new ScreenShake();
 const mascot = new Mascot();
+const fever = new Fever();      // 3연속 정답이면 8초 피버
+const reveal = new Reveal();    // 오답 뒤 정답을 잠깐 보여주는 상태
+let feverBonus = 0;             // 피버 중에 맞힌 만큼 붙는 코인
 let grades = [];
 let recorder, comboShot, fallbackShot, autoRec, recordedBlob = null;
 const recIndicator = document.getElementById("recIndicator");
@@ -251,6 +256,7 @@ function layoutPieces() {
 function newRound() {
   round = genRound(autoDiff.level);
   phase = "pick"; chosen = null; pieceDeg = 0; snap = null; held = null; turnLatch = true;
+  gapX = dims.w / 2; gapDir = Math.random() < 0.5 ? -1 : 1;
   if (typeof turnRow !== "undefined" && turnRow) turnRow.style.display = "none";
   layoutPieces();
   resolving = false;
@@ -284,6 +290,7 @@ function beginPlay() {
   const prev = HighScore.get(UNIT);
   autoDiff = new AutoDifficulty(levelFromUrl(AutoDifficulty.startLevelFromHighScore(prev)));
   count = 0; combo = 0; maxCombo = 0;
+  fever.reset(); reveal.clear(); feverBonus = 0;
   popups = []; bigPopups = []; confetti = []; sparks = [];
   playEndAt = performance.now() + 60000;
   lastFrameAt = performance.now();
@@ -310,6 +317,8 @@ function succeed() {
   snap = { start: performance.now() };
   count++; combo++;
   mascot.cheer();
+  fever.hit(combo);
+  if (fever.on) feverBonus += 2;
   spawnGrade(grades, dims.w / 2, dims.h * 0.52, combo);
   if (combo > maxCombo) { maxCombo = combo; comboShot.capture(canvas); }
   autoDiff.reportCorrect();
@@ -319,7 +328,7 @@ function succeed() {
   spawnConfetti(confetti, dims.w / 2, blockY(), 40);
   spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.44, `🤾 침투 성공! ${count}개`, CUTE.sun);
   if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
-  setTimeout(() => { if (state === "playing") newRound(); }, 850);
+  setTimeout(() => { if (state === "playing") newRound(); }, 700);
 }
 
 function fail(x, y, msg) {
@@ -327,12 +336,15 @@ function fail(x, y, msg) {
   resolving = true;
   combo = 0;
   mascot.oops();
+  fever.reset();
   autoDiff.reportWrong();
   shake.trigger(4, 150);
   flashUntil = performance.now() + 450;
+  const ans = slots.find((s) => s.shape.key === round.answerKey);
+  if (ans) reveal.show({ x: ans.x, y: ans.y, r: ans.R * 1.2, label: ans.shape.name });
   spawnPopup(popups, x, y, msg, CUTE.red);
   if (!isMuted()) sound.fizzle();
-  setTimeout(() => { if (state === "playing") newRound(); }, 800);
+  setTimeout(() => { if (state === "playing") newRound(); }, 1400);
 }
 
 function endGame() {
@@ -341,7 +353,7 @@ function endGame() {
   const prev = HighScore.get(UNIT);
   const best = Math.max(count, prev ? prev.count : 0);
   const isNewRecord = count > 0 && (!prev || count > prev.count);
-  const earned = Coins.earn(medal, maxCombo);
+  const earned = Coins.earn(medal, maxCombo) + feverBonus;
   Coins.add(earned);
   if (!prev || count >= prev.count) {
     HighScore.set(UNIT, { count, bestLevel: autoDiff.level, label: `${medal} ${count}${RECORD_SUFFIX}`, at: Date.now() });
@@ -513,6 +525,8 @@ function loop(tsMs) {
     drawPoseHint(ctx, dims, fluidPx, poseHint(body, mode));
   }
 
+  if (state === "playing") drawFeverFrame(ctx, dims, fever, fluidPx);
+
   for (const c of cursors) drawGloveCursor(ctx, c.x, c.y, fluidPx(dims, 44, { min: 32, max: 62 }), { active: phase === "turn" });
   ctx.restore();
 }
@@ -555,8 +569,8 @@ function drawBlockWall(ctx, gapW) {
   const y = blockY();
   const th = fluidPx(dims, 34, { min: 26, max: 50 });
   const sides = [
-    { x0: 0, x1: w / 2 - gapW / 2 },
-    { x0: w / 2 + gapW / 2, x1: w },
+    { x0: 0, x1: gapX - gapW / 2 },
+    { x0: gapX + gapW / 2, x1: w },
   ];
   for (const s of sides) {
     const span = s.x1 - s.x0;
@@ -618,6 +632,13 @@ function stepGame() {
   const R = pieceR();
   const gapW = R * 2.6;
 
+  // 빈틈이 가만히 있으면 긴장감이 없다 — 벽이 좌우로 천천히 오간다
+  if (!resolving) {
+    gapX += gapDir * w * (0.028 + 0.018 * autoDiff.level) * dt;
+    if (gapX < w * 0.26) { gapX = w * 0.26; gapDir = 1; }
+    if (gapX > w * 0.74) { gapX = w * 0.74; gapDir = -1; }
+  }
+
   const target = ((round.dir > 0 ? round.turn : 360 - round.turn) % 360 + 360) % 360;
   const angleOk = Math.abs(((pieceDeg - target + 540) % 360) - 180) <= 8;
 
@@ -656,7 +677,7 @@ function stepGame() {
     }
 
     // 각도가 맞은 채로 빈틈까지 가져가면 자석처럼 빨려 들어간다
-    const inGap = Math.abs(held.x - w / 2) < gapW * 0.6 && Math.abs(held.y - blockY()) < R * 1.5;
+    const inGap = Math.abs(held.x - gapX) < gapW * 0.6 && Math.abs(held.y - blockY()) < R * 1.5;
     if (armed && angleOk && inGap) { succeed(); return; }
   }
 
@@ -669,18 +690,19 @@ function stepGame() {
       drawQuad(ctx, s.shape, s.x, s.y + by, s.R, 0, s.color);
       drawMood(ctx, s.x, s.y + by, s.R * 0.38, "idle");
     }
+    if (reveal.on) drawAnswerRing(ctx, dims, fluidPx, reveal.data.x, reveal.data.y, reveal.data.r, reveal.data.label);
     drawChunkyText(ctx, "조건에 맞는 사각형 조각을 손으로 잡아요!", w / 2, h * 0.92,
       fluidPx(dims, 16, { min: 12, max: 21 }), "#ffffff",
       { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) });
   } else {
     // 빈틈에 목표 방향이 점선으로 떠 있어서, 어디까지 돌려야 하는지 눈으로 보인다
-    drawQuad(ctx, chosen.shape, w / 2, blockY(), R, target, angleOk ? CUTE.green : "#ffffff", { ghost: true });
+    drawQuad(ctx, chosen.shape, gapX, blockY(), R, target, angleOk ? CUTE.green : "#ffffff", { ghost: true });
 
     let px = held.x, py = held.y;
     if (snap) {
       const t = Math.min(1, (now - snap.start) / 420);
       const e = 1 - Math.pow(1 - t, 3);
-      px = held.x + (w / 2 - held.x) * e;
+      px = held.x + (gapX - held.x) * e;
       py = held.y + (blockY() - held.y) * e;
     }
     drawQuad(ctx, chosen.shape, px, py, R, pieceDeg, angleOk ? CUTE.green : chosen.color);

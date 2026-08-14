@@ -95,6 +95,7 @@ import {
   ensureFont, Coins, Mascot, drawMood, spawnGrade, updateGrades, drawGrades,
   showRuleCard, showStartStamp, showResult, hudBand, drawHudPanel,
   drawTimeUrgency, poseHint, drawPoseHint,
+  Fever, drawFeverFrame, drawAnswerRing, Reveal,
 } from "../js/party.js?v=1";
 requestWakeLock();
 
@@ -210,7 +211,7 @@ function genRound(level) {
     // 우연히 다른 정답 짝이 생기면 문제 자체는 여전히 옳지만, 헷갈림을 줄이려고 걸러낸다
     mates.push(wf);
   }
-  return { d, T, mates: shuffle(mates) };
+  return { d, T, pair: [a, b], mates: shuffle(mates) };
 }
 
 // 남은 값(T - 고른 값)을 가진 동료가 코트에 있는지 — 있으면 첫 패스로 인정한다
@@ -257,10 +258,15 @@ const startGate = new StartGate(mode, holdFill);
 let autoDiff, count, combo, maxCombo, playEndAt;
 let round, mates, defenders, stage, need, roundAt, resolving, flashUntil = 0, passLine = null;
 let picked = null, solvedB = null; // 식 띠에 채워 넣을 첫 번째·두 번째 분수
+let ballAt = null;                 // 공이 지금 있는 자리
+let ballFly = null;                // 날아가는 중 { from, to, start, dur }
 let netWave = 0; // 골망이 출렁이기 시작한 시각
 let popups = [], bigPopups = [], confetti = [], sparks = [];
 const shake = new ScreenShake();
 const mascot = new Mascot();
+const fever = new Fever();      // 3연속 정답이면 8초 피버
+const reveal = new Reveal();    // 오답 뒤 정답을 잠깐 보여주는 상태
+let feverBonus = 0;             // 피버 중에 맞힌 만큼 붙는 코인
 let grades = [];
 let recorder, comboShot, fallbackShot, autoRec, recordedBlob = null;
 const recIndicator = document.getElementById("recIndicator");
@@ -269,6 +275,15 @@ let cursors = [];
 function topBand() { return hudBand(dims); }
 function mateR() { return fluidPx(dims, 46, { min: 34, max: 66 }); }
 function ballPos() { return { x: dims.w / 2, y: dims.h * 0.93 }; }
+
+// 패스는 점선만 긋는 게 아니라 공이 진짜로 날아가야 "패스"로 보인다
+function targetSizeGuess() { return fluidPx(dims, 44, { min: 30, max: 60 }) * 1.35; }
+
+function flyBall(to, dur = 320) {
+  const from = ballAt || ballPos();
+  ballFly = { from: { x: from.x, y: from.y }, to: { x: to.x, y: to.y }, start: performance.now(), dur };
+  ballAt = { x: to.x, y: to.y };
+}
 
 function layoutMates() {
   const { w, h } = dims;
@@ -282,8 +297,8 @@ function layoutMates() {
       f, idx: i,
       x: w * 0.10 + (w * 0.80) * t,
       y: y0 + (y1 - y0) * (0.15 + 0.70 * ((i * 0.37 + 0.2) % 1)),
-      vx: (Math.random() < 0.5 ? -1 : 1) * (w * 0.012),
-      vy: (Math.random() < 0.5 ? -1 : 1) * (h * 0.010),
+      vx: (Math.random() < 0.5 ? -1 : 1) * w * (0.035 + 0.012 * autoDiff.level),
+      vy: (Math.random() < 0.5 ? -1 : 1) * h * (0.030 + 0.010 * autoDiff.level),
       color: LANE_COLORS[i % LANE_COLORS.length],
       taken: false,
       R,
@@ -296,7 +311,9 @@ function layoutMates() {
     defenders.push({
       x: w * (0.2 + 0.6 * Math.random()),
       y: h * (0.68 + 0.13 * (i / Math.max(1, dn - 1 || 1))),
-      vx: (Math.random() < 0.5 ? -1 : 1) * w * (0.055 + 0.02 * autoDiff.level),
+      vx: (Math.random() < 0.5 ? -1 : 1) * w * (0.07 + 0.025 * autoDiff.level),
+      vy: (Math.random() < 0.5 ? -1 : 1) * h * 0.03,
+      y0: h * 0.64, y1: h * 0.80,
       r: R * 0.86,
     });
   }
@@ -305,6 +322,7 @@ function layoutMates() {
 function newRound() {
   round = genRound(autoDiff.level);
   stage = 0; need = null; passLine = null; picked = null; solvedB = null;
+  ballAt = ballPos(); ballFly = null;
   layoutMates();
   resolving = false;
   roundAt = performance.now();
@@ -337,6 +355,7 @@ function beginPlay() {
   const prev = HighScore.get(UNIT);
   autoDiff = new AutoDifficulty(levelFromUrl(AutoDifficulty.startLevelFromHighScore(prev)));
   count = 0; combo = 0; maxCombo = 0;
+  fever.reset(); reveal.clear(); feverBonus = 0;
   popups = []; bigPopups = []; confetti = []; sparks = [];
   playEndAt = performance.now() + 60000;
   newRound();
@@ -364,30 +383,38 @@ function goal(m) {
   stage = 2;
   count++; combo++;
   mascot.cheer();
+  fever.hit(combo);
+  if (fever.on) feverBonus += 2;
   spawnGrade(grades, dims.w / 2, dims.h * 0.52, combo);
   if (combo > maxCombo) { maxCombo = combo; comboShot.capture(canvas); }
   autoDiff.reportCorrect();
   autoRec.trigger();
   shake.trigger(8, 180);
   netWave = performance.now();
+  flyBall({ x: m.x, y: m.y }, 260);
+  setTimeout(() => { if (state === "playing") flyBall({ x: dims.w / 2, y: topBand().y1 + targetSizeGuess() }, 320); }, 270);
   spawnSparkles(sparks, m.x, m.y, 24, ["#fff", CUTE.sun, CUTE.green]);
   spawnConfetti(confetti, dims.w / 2, dims.h * 0.2, 40);
   spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.30, `⚽ 골인! ${count}골`, CUTE.sun);
   if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
-  setTimeout(() => { if (state === "playing") newRound(); }, 1300);
+  setTimeout(() => { if (state === "playing") newRound(); }, 700);
 }
 
 function fail(x, y, msg) {
   if (resolving) return;
   resolving = true;
   combo = 0;
+  // 틀린 순간이 가장 잘 배우는 순간 — 완성된 식을 초록으로 보여준다
+  picked = round.pair[0]; solvedB = round.pair[1]; stage = 2;
+  reveal.show({ eq: true });
   mascot.oops();
+  fever.reset();
   autoDiff.reportWrong();
   shake.trigger(4, 150);
   flashUntil = performance.now() + 450;
   spawnPopup(popups, x, y - mateR(), msg, CUTE.red);
   if (!isMuted()) sound.fizzle();
-  setTimeout(() => { if (state === "playing") newRound(); }, 800);
+  setTimeout(() => { if (state === "playing") newRound(); }, 1400);
 }
 
 function endGame() {
@@ -396,7 +423,7 @@ function endGame() {
   const prev = HighScore.get(UNIT);
   const best = Math.max(count, prev ? prev.count : 0);
   const isNewRecord = count > 0 && (!prev || count > prev.count);
-  const earned = Coins.earn(medal, maxCombo);
+  const earned = Coins.earn(medal, maxCombo) + feverBonus;
   Coins.add(earned);
   if (!prev || count >= prev.count) {
     HighScore.set(UNIT, { count, bestLevel: autoDiff.level, label: `${medal} ${count}${RECORD_SUFFIX}`, at: Date.now() });
@@ -502,6 +529,8 @@ function loop(tsMs) {
     if (state === "playing") mascot.draw(ctx, dims, fluidPx);
     drawPoseHint(ctx, dims, fluidPx, poseHint(body, mode));
   }
+
+  if (state === "playing") drawFeverFrame(ctx, dims, fever, fluidPx);
 
   for (const c of cursors) drawGloveCursor(ctx, c.x, c.y, fluidPx(dims, 44, { min: 32, max: 62 }), { active: stage === 1 });
   ctx.restore();
@@ -656,8 +685,9 @@ function stepGame() {
     if (m.y < h * 0.34 || m.y > h * 0.60) m.vy *= -1;
   }
   for (const d of defenders) {
-    d.x += d.vx * dt;
+    d.x += d.vx * dt; d.y += d.vy * dt;
     if (d.x < w * 0.10 || d.x > w * 0.90) d.vx *= -1;
+    if (d.y < d.y0 || d.y > d.y1) d.vy *= -1;
   }
 
   if (armed && !resolving) {
@@ -686,6 +716,7 @@ function stepGame() {
         passLine = { from, to: { x: best.x, y: best.y } };
         stage = 1;
         picked = best.f;
+        flyBall({ x: best.x, y: best.y });
         roundAt = performance.now();
         spawnSparkles(sparks, best.x, best.y, 12, ["#fff", CUTE.sun]);
         spawnPopup(popups, best.x, best.y - best.R, "패스!", CUTE.blueDark);
@@ -728,12 +759,22 @@ function stepGame() {
     drawFraction(ctx, m.f, m.x, m.y + by + m.R * 0.38, m.R * 0.46, "#ffffff");
   }
 
-  // 공을 든 나
-  drawSticker(ctx, ball.x, ball.y, mateR() * 0.6, CUTE.sun, { lineWidth: Math.max(3, mateR() * 0.1) });
+  // 공 — 패스할 때마다 포물선을 그리며 실제로 날아간다
+  let bx = ballAt ? ballAt.x : ball.x, by = ballAt ? ballAt.y : ball.y, spin = 0;
+  if (ballFly) {
+    const ft = Math.min(1, (performance.now() - ballFly.start) / ballFly.dur);
+    bx = ballFly.from.x + (ballFly.to.x - ballFly.from.x) * ft;
+    by = ballFly.from.y + (ballFly.to.y - ballFly.from.y) * ft - Math.sin(Math.PI * ft) * h * 0.12;
+    spin = ft * Math.PI * 3;
+    if (ft >= 1) ballFly = null;
+  }
   ctx.save();
-  ctx.font = `${mateR() * 0.75}px ${FONT}`;
+  ctx.translate(bx, by);
+  ctx.rotate(spin);
+  drawSticker(ctx, 0, 0, mateR() * 0.55, CUTE.sun, { lineWidth: Math.max(3, mateR() * 0.1) });
+  ctx.font = `${mateR() * 0.7}px ${FONT}`;
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillText("⚽", ball.x, ball.y);
+  ctx.fillText("⚽", 0, 0);
   ctx.restore();
 
   if (performance.now() < flashUntil) {
