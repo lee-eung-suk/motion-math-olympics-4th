@@ -227,7 +227,8 @@ const holdFill = document.getElementById("holdFill");
 const startGate = new StartGate(mode, holdFill);
 
 let autoDiff, count, combo, maxCombo, playEndAt;
-let round, plot, roundAt, resolving, flashUntil = 0, flight = null;
+let round, plot, roundAt, resolving, flashUntil = 0;
+let goalFx = null; // 정답 순간의 대형 골인 연출 { start, from }
 let popups = [], bigPopups = [], confetti = [], sparks = [];
 const shake = new ScreenShake();
 const mascot = new Mascot();
@@ -238,14 +239,13 @@ let cursors = [];
 let lastFrameAt = performance.now();
 
 function topBand() { return hudBand(dims); }
-function goalPos() { return { x: dims.w * 0.93, y: dims.h * 0.52 }; }
 function hitR() { return fluidPx(dims, 30, { min: 22, max: 44 }); }
 
 // 그래프 좌표 계산 — 화면이 바뀌어도 판정 위치와 그림이 항상 같은 값을 쓰도록 한 곳에 모았다
 function layoutGraph() {
   const { w, h } = dims;
   const band = topBand();
-  const x0 = w * 0.13, x1 = w * 0.82;
+  const x0 = w * 0.13, x1 = w * 0.88;
   const y0 = band.y1 + h * 0.11, y1 = h * 0.85;
   const maxUnits = 8;
   const px = (i) => x0 + ((x1 - x0) * (i + 0.5)) / round.n;
@@ -265,7 +265,7 @@ function newRound() {
   round = genRound(autoDiff.level);
   layoutGraph();
   resolving = false;
-  flight = null;
+  goalFx = null;
   roundAt = performance.now();
 }
 
@@ -321,21 +321,98 @@ function succeed(x, y) {
   resolving = true;
   count++; combo++;
   mascot.cheer();
-  spawnGrade(grades, dims.w / 2, dims.h * 0.52, combo);
+  spawnGrade(grades, dims.w / 2, dims.h * 0.22, combo);
   if (combo > maxCombo) { maxCombo = combo; comboShot.capture(canvas); }
   autoDiff.reportCorrect();
   autoRec.trigger();
-  shake.trigger(7, 170);
-  flight = { from: { x, y }, to: goalPos(), start: performance.now(), dur: 620 };
+  goalFx = { start: performance.now(), from: { x, y } };
   spawnSparkles(sparks, x, y, 20, ["#fff", CUTE.sun, CUTE.green]);
   if (!isMuted()) sound.pop();
+
+  // 공이 골망에 꽂히는 순간
   setTimeout(() => {
     if (state !== "playing") return;
-    spawnConfetti(confetti, goalPos().x, goalPos().y, 34);
-    spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.45, `⚽ 골인! ${count}개`, CUTE.sun);
+    shake.trigger(9, 220);
+    spawnConfetti(confetti, dims.w / 2, dims.h * 0.5, 46);
+    spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.78, GOAL_TEXT(), CUTE.sun);
     if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
-  }, 620);
-  setTimeout(() => { if (state === "playing") newRound(); }, 1150);
+  }, 760);
+  setTimeout(() => { if (state === "playing") newRound(); }, 1500);
+}
+
+const BALL = String.fromCodePoint(0x26bd);
+const GOAL_TEXT = () => BALL + " 골인! " + count + "개";
+
+// 정답을 짚으면 화면 뒤쪽에서 커다란 골대가 다가오고, 공이 화면 안으로 날아가 그물이 출렁인다
+function drawBigGoal(ctx) {
+  if (!goalFx) return;
+  const { w, h } = dims;
+  const el = performance.now() - goalFx.start;
+  if (el > 1500) { goalFx = null; return; }
+  const veil = Math.min(1, el / 180) * (el > 1250 ? Math.max(0, 1 - (el - 1250) / 250) : 1);
+
+  ctx.save();
+  ctx.globalAlpha = veil * 0.5;
+  ctx.fillStyle = "#0b1a3a";
+  ctx.fillRect(0, 0, w, h);
+  ctx.restore();
+
+  const gs = Math.min(1, Math.max(0, (el - 100) / 620));
+  const ease = 1 - Math.pow(1 - gs, 3);
+  const gw = w * (0.28 + 0.60 * ease);
+  const gh = gw * 0.52;
+  const cx = w / 2, cy = h * 0.52;
+  const impact = el - 760;
+  const rip = impact > 0 && impact < 600 ? 1 - impact / 600 : 0;
+  const wob = (i, j) => Math.sin(el / 50 + i * 0.6 + j * 0.4) * gh * 0.06 * rip;
+
+  ctx.save();
+  ctx.globalAlpha = veil;
+  ctx.strokeStyle = "rgba(255,255,255,0.7)";
+  ctx.lineWidth = Math.max(1.5, gw * 0.004);
+  const cols = 14, rows = 8;
+  for (let i = 0; i <= cols; i++) {
+    ctx.beginPath();
+    for (let j = 0; j <= rows; j++) {
+      const px = cx - gw / 2 + (gw * i) / cols + wob(i, j);
+      const py = cy - gh / 2 + (gh * j) / rows;
+      if (j === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+  for (let j = 0; j <= rows; j++) {
+    ctx.beginPath();
+    for (let i = 0; i <= cols; i++) {
+      const px = cx - gw / 2 + (gw * i) / cols;
+      const py = cy - gh / 2 + (gh * j) / rows + wob(i, j);
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = Math.max(6, gw * 0.022);
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(cx - gw / 2, cy + gh / 2);
+  ctx.lineTo(cx - gw / 2, cy - gh / 2);
+  ctx.lineTo(cx + gw / 2, cy - gh / 2);
+  ctx.lineTo(cx + gw / 2, cy + gh / 2);
+  ctx.stroke();
+  ctx.restore();
+
+  const bt = Math.min(1, Math.max(0, (el - 100) / 660));
+  const be = 1 - Math.pow(1 - bt, 2);
+  const bx = goalFx.from.x + (cx - goalFx.from.x) * be;
+  const by = goalFx.from.y + (cy - goalFx.from.y) * be - Math.sin(Math.PI * bt) * h * 0.12;
+  const br = fluidPx(dims, 30, { min: 22, max: 44 }) * (1 + be * 0.9);
+  ctx.save();
+  ctx.globalAlpha = veil;
+  ctx.translate(bx, by);
+  ctx.rotate(bt * Math.PI * 3);
+  ctx.font = (br * 2) + "px " + FONT;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(BALL, 0, 0);
+  ctx.restore();
 }
 
 function fail(x, y, msg) {
@@ -436,7 +513,7 @@ function loop(tsMs) {
     drawPoseHint(ctx, dims, fluidPx, poseHint(body, mode));
   }
 
-  for (const c of cursors) drawGloveCursor(ctx, c.x, c.y, fluidPx(dims, 44, { min: 32, max: 62 }), { active: !!flight });
+  for (const c of cursors) drawGloveCursor(ctx, c.x, c.y, fluidPx(dims, 44, { min: 32, max: 62 }), { active: !!goalFx });
   ctx.restore();
 }
 
@@ -585,29 +662,8 @@ function stepGame() {
   drawTopPanel(ctx, remain);
   drawGraph(ctx);
 
-  // 골대
-  const g = goalPos();
-  ctx.save();
-  ctx.font = `${fluidPx(dims, 52, { min: 36, max: 74 })}px ${FONT}`;
-  ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  ctx.fillText("🥅", g.x, g.y);
-  ctx.restore();
-
-  // 정답을 짚으면 공이 그 자리에서 골대로 날아간다
-  if (flight) {
-    const t = Math.min(1, (now - flight.start) / flight.dur);
-    const x = flight.from.x + (flight.to.x - flight.from.x) * t;
-    const arc = Math.sin(Math.PI * t) * h * 0.14;
-    const y = flight.from.y + (flight.to.y - flight.from.y) * t - arc;
-    ctx.save();
-    ctx.font = `${fluidPx(dims, 30, { min: 22, max: 42 })}px ${FONT}`;
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.translate(x, y);
-    ctx.rotate(t * Math.PI * 2);
-    ctx.fillText("⚽", 0, 0);
-    ctx.restore();
-    if (t >= 1) flight = null;
-  }
+  // 정답을 짚으면 화면 전체가 골대가 된다
+  drawBigGoal(ctx);
 
   if (now < flashUntil) {
     ctx.save();

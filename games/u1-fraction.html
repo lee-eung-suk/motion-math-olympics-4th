@@ -103,7 +103,7 @@ const TITLE = "분수 패스 골든골";
 const RECORD_SUFFIX = "골";
 const MEDALS = { bronze: 4, silver: 7, gold: 10 };
 const mode = InputMode.get();
-const RULE = { emoji: "🥅", title: "분수 패스 골든골", rule: "수비를 피해 두 번 패스! 두 친구의 분수를 더하면 골대의 값이 되어야 골인이에요." };
+const RULE = { emoji: "🥅", title: "분수 패스 골든골", rule: "두 친구의 분수를 더해서 골대 숫자를 만들어요! 수비수에게 막히지 않게 빈 곳으로 패스하세요." };
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("gameCanvas");
@@ -256,6 +256,7 @@ const startGate = new StartGate(mode, holdFill);
 
 let autoDiff, count, combo, maxCombo, playEndAt;
 let round, mates, defenders, stage, need, roundAt, resolving, flashUntil = 0, passLine = null;
+let picked = null, solvedB = null; // 식 띠에 채워 넣을 첫 번째·두 번째 분수
 let netWave = 0; // 골망이 출렁이기 시작한 시각
 let popups = [], bigPopups = [], confetti = [], sparks = [];
 const shake = new ScreenShake();
@@ -303,7 +304,7 @@ function layoutMates() {
 
 function newRound() {
   round = genRound(autoDiff.level);
-  stage = 0; need = null; passLine = null;
+  stage = 0; need = null; passLine = null; picked = null; solvedB = null;
   layoutMates();
   resolving = false;
   roundAt = performance.now();
@@ -358,6 +359,9 @@ function beginPlay() {
 function goal(m) {
   if (resolving) return;
   resolving = true;
+  // 식의 두 번째 칸까지 채워서 "3/5 + 1/5 = 4/5" 전체를 잠깐 보여준다 — 이게 이 게임의 학습 포인트다
+  solvedB = m.f;
+  stage = 2;
   count++; combo++;
   mascot.cheer();
   spawnGrade(grades, dims.w / 2, dims.h * 0.52, combo);
@@ -370,7 +374,7 @@ function goal(m) {
   spawnConfetti(confetti, dims.w / 2, dims.h * 0.2, 40);
   spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.30, `⚽ 골인! ${count}골`, CUTE.sun);
   if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
-  setTimeout(() => { if (state === "playing") newRound(); }, 850);
+  setTimeout(() => { if (state === "playing") newRound(); }, 1300);
 }
 
 function fail(x, y, msg) {
@@ -470,37 +474,6 @@ function drawCourt(ctx) {
   ctx.restore();
 }
 
-// 목표 분수가 놓이는 자리 — 골대와 분수가 같은 자리를 쓰도록 한 곳에서 계산한다
-function targetSize() { return fluidPx(dims, 36, { min: 26, max: 50 }); }
-function targetY() { return topBand().y1 + targetSize() * 0.85; }
-
-// 골대. 골이 들어간 직후에는 골망이 출렁인다 — 마리오파티식 "성공 순간의 과장된 반응".
-// 목표 분수를 골대 안에 넣어 "이 값을 골대에 넣는다"가 그림으로 읽히게 했다.
-function drawGoal(ctx) {
-  const { w } = dims;
-  const gh = targetSize() * 1.9;
-  const gw = Math.min(w * 0.42, gh * 3.2);
-  const gx = w / 2 - gw / 2, gy = targetY() + gh * 0.5;
-  const since = performance.now() - netWave;
-  const wave = netWave && since < 900 ? (1 - since / 900) * gh * 0.55 : 0;
-
-  ctx.save();
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = Math.max(4, gh * 0.22);
-  ctx.strokeRect(gx, gy - gh, gw, gh);
-  ctx.strokeStyle = "rgba(255,255,255,0.45)";
-  ctx.lineWidth = 2;
-  for (let x = gx; x <= gx + gw; x += gw / 8) {
-    const t = (x - gx) / gw;
-    const sag = wave * Math.sin(Math.PI * t) * Math.sin(since / 55);
-    ctx.beginPath();
-    ctx.moveTo(x, gy - gh);
-    ctx.quadraticCurveTo(x + sag, gy - gh / 2, x, gy + sag * 0.6);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
 function loop(tsMs) {
   requestAnimationFrame(loop);
   if (mode === "motion" && video.readyState < 2) return;
@@ -547,14 +520,124 @@ function goReady() {
 }
 
 function drawTopPanel(ctx, remain) {
-  const band = drawHudPanel(ctx, dims, fluidPx, {
-    left: stage === 0 ? "① 첫 패스를 고르세요" : "② 남은 값을 가진 친구에게!",
+  drawHudPanel(ctx, dims, fluidPx, {
+    left: stage === 0 ? "① 더할 분수 하나를 고르세요" : "② 얼마가 더 필요한지 계산해요",
     right: `🔥 ${combo}   🏅 ${count}골   ⏱ ${Math.ceil(remain / 1000)}초`,
-    headline: stage === 0 ? "골대에 넣을 값은?" : "남은 값은?",
+    headline: "두 분수를 더해 골대 숫자 만들기!",
   });
-  // 분수는 글자가 아니라 그림이라 배너 안에 넣으면 눌린다. 배너 아래 골대 안에 크게 얹는다.
-  const showF = stage === 0 ? round.T : need;
-  drawFraction(ctx, showF, dims.w / 2, targetY(), targetSize(), stage === 0 ? CUTE.sun : CUTE.green);
+  drawEquation(ctx);
+}
+
+// 식의 빈칸 한 칸. 아직 안 채운 칸은 점선 상자에 물음표, 지금 채울 차례인 칸은 노랗게 깜빡인다.
+function drawEqSlot(ctx, f, cx, cy, size, state) {
+  const w = size * 2.05, h = size * 2.15;
+  const r = size * 0.35;
+  if (state === "goal") {
+    drawStickerRect(ctx, cx, cy, w, h, r, CUTE.green, { lineWidth: Math.max(3, size * 0.13), drop: size * 0.12 });
+    drawFraction(ctx, f, cx, cy, size * 0.86, "#ffffff");
+    return;
+  }
+  if (f) {
+    drawStickerRect(ctx, cx, cy, w, h, r, CUTE.blue, { lineWidth: Math.max(3, size * 0.13), drop: size * 0.12 });
+    drawFraction(ctx, f, cx, cy, size * 0.86, "#ffffff");
+    return;
+  }
+  // 빈칸
+  const pulse = state === "next" ? 0.55 + Math.abs(Math.sin(performance.now() / 320)) * 0.45 : 0.35;
+  ctx.save();
+  ctx.beginPath(); ctx.roundRect(cx - w / 2, cy - h / 2, w, h, r);
+  ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.fill();
+  ctx.globalAlpha = pulse;
+  ctx.setLineDash([size * 0.34, size * 0.26]);
+  ctx.strokeStyle = state === "next" ? CUTE.sunDark : CUTE.ink;
+  ctx.lineWidth = Math.max(3, size * 0.13);
+  ctx.stroke();
+  ctx.restore();
+  if (state === "next") {
+    drawChunkyText(ctx, "?", cx, cy, size * 1.05, CUTE.sun,
+      { outline: CUTE.ink, outlineWidth: Math.max(3, size * 0.2) });
+  } else {
+    ctx.save();
+    ctx.font = `900 ${size * 1.05}px ${FONT}`;
+    ctx.fillStyle = "rgba(34,48,92,0.32)";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("?", cx, cy);
+    ctx.restore();
+  }
+}
+
+// 골대 모양 테두리 — "이 값을 골대에 넣는다"가 그림으로 읽히게 한다
+function drawGoalSlot(ctx, f, cx, cy, size) {
+  const w = size * 2.6, h = size * 2.3;
+  const since = performance.now() - netWave;
+  const wave = netWave && since < 900 ? (1 - since / 900) * size * 0.5 : 0;
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,255,255,0.85)";
+  ctx.lineWidth = Math.max(2, size * 0.06);
+  for (let i = 0; i <= 6; i++) {
+    const x = cx - w / 2 + (w * i) / 6;
+    const sag = wave * Math.sin((Math.PI * i) / 6) * Math.sin(since / 55);
+    ctx.beginPath();
+    ctx.moveTo(x, cy - h / 2);
+    ctx.quadraticCurveTo(x + sag, cy, x, cy + h / 2);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = Math.max(4, size * 0.2);
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(cx - w / 2, cy + h / 2);
+  ctx.lineTo(cx - w / 2, cy - h / 2);
+  ctx.lineTo(cx + w / 2, cy - h / 2);
+  ctx.lineTo(cx + w / 2, cy + h / 2);
+  ctx.stroke();
+  ctx.restore();
+  drawFraction(ctx, f, cx, cy, size, CUTE.sun);
+}
+
+// ★ 이 게임이 "두 분수를 더하는 놀이"임을 화면에 계속 붙들어 두는 식 띠.
+// 예전에는 상단 문구가 "골대에 넣을 값" → "남은 값"으로 통째로 바뀌어서,
+// 처음 본 목표가 어디로 갔는지 학생이 알 수 없었다.
+function drawEquation(ctx) {
+  const { w } = dims;
+  const band = topBand();
+  const size = fluidPx(dims, 44, { min: 30, max: 60 });
+  const slotW = size * 2.05, opW = size * 1.25, goalW = size * 2.6;
+  const totalW = slotW * 2 + goalW + opW * 2;
+  const boxH = size * 2.7;
+  const cy = band.y1 + boxH * 0.62;
+  drawStickerRect(ctx, w / 2, cy, Math.min(w * 0.96, totalW + size * 1.4), boxH,
+    fluidPx(dims, 18, { min: 12, max: 26 }), CUTE.cream, {
+      lineWidth: fluidPx(dims, 4, { min: 3, max: 6 }), drop: fluidPx(dims, 5, { min: 3, max: 8 }),
+    });
+
+  const done = stage === 2;
+  const op = (ch, ox) => {
+    ctx.save();
+    ctx.font = `900 ${size * 1.15}px ${FONT}`;
+    ctx.fillStyle = CUTE.ink;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(ch, ox, cy);
+    ctx.restore();
+  };
+
+  let x = w / 2 - totalW / 2 + slotW / 2;
+  drawEqSlot(ctx, picked, x, cy, size, done ? "goal" : picked ? "filled" : "next");
+  x += slotW / 2 + opW / 2;
+  op("+", x);
+  x += opW / 2 + slotW / 2;
+  drawEqSlot(ctx, solvedB, x, cy, size, done ? "goal" : picked ? "next" : "empty");
+  x += slotW / 2 + opW / 2;
+  op("=", x);
+  x += opW / 2 + goalW / 2;
+  drawGoalSlot(ctx, round.T, x, cy, size);
+
+  // 두 번째 칸을 채울 차례면 "얼마가 더 필요한지"를 작게 귀띔한다
+  if (picked && !done) {
+    drawChunkyText(ctx, "얼마를 더해야 할까요?", w / 2, cy + boxH * 0.62,
+      fluidPx(dims, 15, { min: 11, max: 20 }), "#ffffff",
+      { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) });
+  }
 }
 
 function stepGame() {
@@ -602,6 +685,7 @@ function stepGame() {
         need = rest;
         passLine = { from, to: { x: best.x, y: best.y } };
         stage = 1;
+        picked = best.f;
         roundAt = performance.now();
         spawnSparkles(sparks, best.x, best.y, 12, ["#fff", CUTE.sun]);
         spawnPopup(popups, best.x, best.y - best.R, "패스!", CUTE.blueDark);
@@ -616,7 +700,6 @@ function stepGame() {
   }
 
   drawCourt(ctx);
-  drawGoal(ctx);
   drawTopPanel(ctx, remain);
 
   // 이미 성공한 패스 길

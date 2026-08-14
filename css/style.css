@@ -561,3 +561,12 @@ body.landing .card .card-thumb.thumb-fallback,
   filter:drop-shadow(0 3px 5px #00000060);
   animation:cardBob 2.2s ease-in-out infinite;
 }
+
+/* 종목 4의 45° 회전 단추 — 기본 어두운 색이라 배경에 묻혀서 밝게 바꾼다 */
+.gesture-row .gesture-btn{
+  background:linear-gradient(180deg,#fffdf3,#ffe9a8);
+  color:#22305c;border:3px solid #22305c;
+  box-shadow:0 5px 0 #c99a1a, 0 10px 20px #00000040;
+  font-weight:900;
+}
+.gesture-row .gesture-btn:active{transform:translateY(4px);box-shadow:0 1px 0 #c99a1a;}

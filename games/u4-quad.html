@@ -18,6 +18,11 @@
     <button class="home-btn" id="homeBtn">🏠</button>
   </div>
 
+  <div class="gesture-row" id="turnRow" style="display:none">
+    <button class="gesture-btn" id="turnL" aria-label="왼쪽으로 45도 돌리기">↺</button>
+    <button class="gesture-btn" id="turnR" aria-label="오른쪽으로 45도 돌리기">↻</button>
+  </div>
+
   <div class="overlay-panel" id="loadingPanel">
     <h2>🤾 사각형 뒤집기 패스</h2>
     <p id="loadingText">준비 중…</p>
@@ -103,7 +108,7 @@ const TITLE = "사각형 뒤집기 패스";
 const RECORD_SUFFIX = "개";
 const MEDALS = { bronze: 4, silver: 6, gold: 9 };
 const mode = InputMode.get();
-const RULE = { emoji: "🤾", title: "사각형 뒤집기 패스", rule: "조건에 맞는 사각형 조각을 잡고, 몸을 돌려 빈틈의 각도에 맞춰 던져요!" };
+const RULE = { emoji: "🤾", title: "사각형 뒤집기 패스", rule: "조건에 맞는 조각을 잡으면 손을 따라와요. 몸을 좌우로 기울여 45°씩 돌린 뒤, 수비 블록의 빈틈으로 가져가면 쏙!" };
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("gameCanvas");
@@ -215,7 +220,9 @@ const startGate = new StartGate(mode, holdFill);
 
 let autoDiff, count, combo, maxCombo, playEndAt;
 let round, slots, phase, chosen, roundAt, resolving, flashUntil = 0;
-let pieceDeg, matchSince, snap = null; // snap: 각도가 맞아 조각이 빈틈으로 빨려 들어가는 연출
+let pieceDeg, snap = null;   // snap: 조각이 빈틈으로 빨려 들어가는 연출
+let held = null;             // 손에 들고 있는 조각 { shape, x, y, color }
+let turnLatch = true;        // 45°씩 '딸깍' 한 칸만 돌도록 하는 걸쇠
 let popups = [], bigPopups = [], confetti = [], sparks = [];
 const shake = new ScreenShake();
 const mascot = new Mascot();
@@ -243,7 +250,8 @@ function layoutPieces() {
 
 function newRound() {
   round = genRound(autoDiff.level);
-  phase = "pick"; chosen = null; pieceDeg = 0; matchSince = 0; snap = null;
+  phase = "pick"; chosen = null; pieceDeg = 0; snap = null; held = null; turnLatch = true;
+  if (typeof turnRow !== "undefined" && turnRow) turnRow.style.display = "none";
   layoutPieces();
   resolving = false;
   roundAt = performance.now();
@@ -509,6 +517,17 @@ function loop(tsMs) {
   ctx.restore();
 }
 
+// 45°씩 한 칸만 돈다 — 지나쳤다 되돌아오길 반복하던 문제를 없앤다
+function rotatePiece(dir) {
+  if (phase !== "turn" || resolving) return;
+  pieceDeg = ((pieceDeg + dir * 45) % 360 + 360) % 360;
+  if (!isMuted()) sound.click();
+}
+
+const turnRow = document.getElementById("turnRow");
+document.getElementById("turnL").addEventListener("click", () => rotatePiece(-1));
+document.getElementById("turnR").addEventListener("click", () => rotatePiece(1));
+
 function goReady() {
   state = "ready";
   document.getElementById("raisePanel").style.display = "none";
@@ -561,7 +580,7 @@ function drawTurnDial(ctx, cx, cy, R, targetDeg, curDeg, ok) {
   ctx.save();
   ctx.translate(cx, cy);
   ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(29,43,77,0.42)"; ctx.fill();
+  ctx.fillStyle = "rgba(29,43,77,0.55)"; ctx.fill();
   ctx.strokeStyle = "rgba(255,255,255,0.6)"; ctx.lineWidth = Math.max(2, R * 0.05); ctx.stroke();
 
   // 45° 눈금
@@ -599,6 +618,9 @@ function stepGame() {
   const R = pieceR();
   const gapW = R * 2.6;
 
+  const target = ((round.dir > 0 ? round.turn : 360 - round.turn) % 360 + 360) % 360;
+  const angleOk = Math.abs(((pieceDeg - target + 540) % 360) - 180) <= 8;
+
   if (phase === "pick" && armed && !resolving) {
     let best = null, bestD = Infinity;
     for (const c of cursors) {
@@ -610,10 +632,12 @@ function stepGame() {
     if (best) {
       if (best.shape.key === round.answerKey) {
         chosen = best;
-        phase = "turn"; pieceDeg = 0; matchSince = 0;
+        held = { shape: best.shape, color: best.color, x: best.x, y: best.y };
+        phase = "turn"; pieceDeg = 0; turnLatch = true;
         roundAt = now;
+        if (mode !== "motion") turnRow.style.display = "flex";
         spawnSparkles(sparks, best.x, best.y, 14, ["#fff", CUTE.sun]);
-        spawnPopup(popups, best.x, best.y - best.R, "잡았다! 이제 돌리기", CUTE.green);
+        spawnPopup(popups, best.x, best.y - best.R, "잡았다! 각도를 맞춰 빈틈으로", CUTE.green);
         if (!isMuted()) sound.pop();
       } else {
         fail(best.x, best.y - best.R, "조건을 다시 봐요!");
@@ -621,19 +645,19 @@ function stepGame() {
       }
     }
   } else if (phase === "turn" && !resolving) {
-    // 몸통을 돌린 만큼 조각이 돌아간다. 각속도로 다루면 조금씩 미세 조정할 수 있어 맞추기 쉽다.
-    const turn = body.torsoTurn();
-    if (Math.abs(turn) > 0.12) pieceDeg += turn * 150 * dt;
-    pieceDeg = ((pieceDeg % 360) + 360) % 360;
-    const target = ((round.dir > 0 ? round.turn : 360 - round.turn) % 360 + 360) % 360;
-    let diff = Math.abs(((pieceDeg - target + 540) % 360) - 180);
-    const ok = diff <= 11;
-    if (armed && ok) {
-      if (!matchSince) matchSince = now;
-      if (now - matchSince > 400) { succeed(); return; }
-    } else {
-      matchSince = 0;
+    // 조각은 손을 따라오고, 회전은 45°씩 딱 한 칸만 '딸깍' 돈다.
+    // 예전에는 몸 기울기로 각속도를 조절해서, 원하는 각도에 딱 멈추기가 무척 어려웠다.
+    if (cursors.length) { held.x = cursors[0].x; held.y = cursors[0].y; }
+
+    if (mode === "motion") {
+      const turn = body.torsoTurn();
+      if (Math.abs(turn) < 0.25) turnLatch = true;
+      else if (turnLatch) { rotatePiece(turn > 0 ? 1 : -1); turnLatch = false; }
     }
+
+    // 각도가 맞은 채로 빈틈까지 가져가면 자석처럼 빨려 들어간다
+    const inGap = Math.abs(held.x - w / 2) < gapW * 0.6 && Math.abs(held.y - blockY()) < R * 1.5;
+    if (armed && angleOk && inGap) { succeed(); return; }
   }
 
   drawBlockWall(ctx, gapW);
@@ -649,33 +673,30 @@ function stepGame() {
       fluidPx(dims, 16, { min: 12, max: 21 }), "#ffffff",
       { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) });
   } else {
-    const target = ((round.dir > 0 ? round.turn : 360 - round.turn) % 360 + 360) % 360;
-    const diff = Math.abs(((pieceDeg - target + 540) % 360) - 180);
-    const ok = diff <= 11;
-
     // 빈틈에 목표 방향이 점선으로 떠 있어서, 어디까지 돌려야 하는지 눈으로 보인다
-    drawQuad(ctx, chosen.shape, w / 2, blockY(), R, target, ok ? CUTE.green : "#ffffff", { ghost: true });
+    drawQuad(ctx, chosen.shape, w / 2, blockY(), R, target, angleOk ? CUTE.green : "#ffffff", { ghost: true });
 
-    // 각도가 맞으면 조각이 자석처럼 빈틈으로 빨려 들어간다
-    let px = w / 2, py = h * 0.62;
+    let px = held.x, py = held.y;
     if (snap) {
       const t = Math.min(1, (now - snap.start) / 420);
       const e = 1 - Math.pow(1 - t, 3);
-      py = h * 0.62 + (blockY() - h * 0.62) * e;
+      px = held.x + (w / 2 - held.x) * e;
+      py = held.y + (blockY() - held.y) * e;
     }
-    drawQuad(ctx, chosen.shape, px, py, R, pieceDeg, ok ? CUTE.green : chosen.color);
-    drawMood(ctx, px, py, R * 0.34, ok ? "happy" : "wow");
+    drawQuad(ctx, chosen.shape, px, py, R, pieceDeg, angleOk ? CUTE.green : chosen.color);
+    drawMood(ctx, px, py, R * 0.34, angleOk ? "happy" : "wow");
 
-    drawTurnDial(ctx, w * 0.86, h * 0.62, Math.min(w, h) * 0.10, target, pieceDeg, ok);
+    drawTurnDial(ctx, w * 0.9, h * 0.5, Math.min(w, h) * 0.09, target, pieceDeg, angleOk);
 
     drawChunkyText(
       ctx,
-      mode === "motion" ? "몸을 기울여 조각을 돌려요!" : "화면을 좌우로 끌어 조각을 돌려요!",
-      w / 2, h * 0.86, fluidPx(dims, 16, { min: 12, max: 21 }), "#ffffff",
+      angleOk ? "좋아요! 빈틈으로 가져가요" : (mode === "motion" ? "몸을 좌우로 기울여 45°씩 돌려요" : "아래 ↺ ↻ 단추로 45°씩 돌려요"),
+      w / 2, h * 0.80, fluidPx(dims, 17, { min: 12, max: 22 }),
+      angleOk ? CUTE.green : "#ffffff",
       { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) },
     );
-    drawChunkyText(ctx, `${Math.round(pieceDeg)}°`, w / 2, h * 0.92,
-      fluidPx(dims, 24, { min: 17, max: 32 }), ok ? CUTE.green : CUTE.sun,
+    drawChunkyText(ctx, `${Math.round(pieceDeg)}°`, w * 0.9, h * 0.5 + Math.min(w, h) * 0.145,
+      fluidPx(dims, 22, { min: 16, max: 30 }), angleOk ? CUTE.green : CUTE.sun,
       { outline: CUTE.ink, outlineWidth: fluidPx(dims, 6, { min: 4, max: 8 }) });
   }
 

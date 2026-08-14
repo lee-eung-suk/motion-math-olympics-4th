@@ -88,7 +88,7 @@ import {
 import {
   CUTE, FONT, LANE_COLORS, drawSticker, drawStickerRect, drawChunkyText,
   spawnSparkles, updateSparkles, drawSparkles, makeDrifters, drawDrifters,
-  drawBunting, drawGloveCursor, drawLevelStars, drawPips,
+  drawBunting, drawGloveCursor, drawLevelStars,
 } from "../js/cute.js?v=4";
 import { PoseTracker, BodyInput, drawSkeleton } from "../js/pose.js?v=1";
 import {
@@ -101,10 +101,9 @@ requestWakeLock();
 const UNIT = "g3";
 const TITLE = "소수 돌파 드리블";
 const RECORD_SUFFIX = "골";
-const MEDALS = { bronze: 3, silver: 5, gold: 7 };
-const WALLS_PER_GOAL = 3;
+const MEDALS = { bronze: 5, silver: 8, gold: 12 };
 const mode = InputMode.get();
-const RULE = { emoji: "⛹️", title: "소수 돌파 드리블", rule: "☐에 들어갈 소수가 적힌 문으로 손을 쏙! 세 번 연속 돌파하면 골이에요." };
+const RULE = { emoji: "⛹️", title: "소수 돌파 드리블", rule: "농구공을 손에 들고, ☐에 들어갈 소수가 적힌 골대로 가져가면 슛! 골대는 좌우로 움직여요." };
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("gameCanvas");
@@ -113,7 +112,7 @@ let drifters = makeDrifters(12, dims.w, dims.h);
 window.addEventListener("resize", () => {
   dims = fitCanvasToScreen(canvas);
   drifters = makeDrifters(12, dims.w, dims.h);
-  if (state === "playing" && wall) layoutGates();
+  if (state === "playing" && wall) layoutHoops();
 });
 
 const sound = new SoundKit();
@@ -224,8 +223,11 @@ const holdFill = document.getElementById("holdFill");
 const startGate = new StartGate(mode, holdFill);
 
 let autoDiff, count, combo, maxCombo, playEndAt;
-let wall, gates, wallY, wallSpeed, cleared, resolving, wallAt, flashUntil = 0;
-let debris = []; // 돌파한 문이 부서져 나온 블록 조각
+let wall, hoops, resolving, wallAt, flashUntil = 0;
+let shot = null;        // 날아가는 공 { from, to, start, dur, ok, hoop }
+let shotClockLeft = 0;  // 농구 24초 룰처럼 한 문제를 붙들 수 있는 시간(ms, 프레임 dt로 깎는다)
+let shotClockTotal = 1;
+let ballHome = null;    // 공이 얹혀 있는 손 위치
 let popups = [], bigPopups = [], confetti = [], sparks = [];
 const shake = new ScreenShake();
 const mascot = new Mascot();
@@ -236,30 +238,41 @@ let cursors = [];
 let lastFrameAt = performance.now();
 
 function topBand() { return hudBand(dims); }
-function judgeY() { return dims.h * 0.80; }
-function gateH() { return fluidPx(dims, 62, { min: 46, max: 92 }); }
+function hoopSize() { return fluidPx(dims, 76, { min: 56, max: 108 }); }
+function hoopY() { return dims.h * 0.40; }
+function ballR() { return fluidPx(dims, 34, { min: 25, max: 50 }); }
 
-function layoutGates() {
+// 골대는 각자 자기 구역 안에서 좌우로 오간다 — 서로 겹치지 않으면서 "슛 타이밍"이 생긴다
+function layoutHoops() {
   const { w } = dims;
   const n = wall.options.length;
-  const gw = Math.min(w * 0.26, (w * 0.92) / n - fluidPx(dims, 14, { min: 9, max: 20 }));
-  gates = wall.options.map((v, i) => ({
-    v, idx: i,
-    cx: w * 0.06 + (w * 0.88) * ((i + 0.5) / n),
-    w: gw,
-    color: LANE_COLORS[i % LANE_COLORS.length],
-  }));
+  const S = hoopSize();
+  const margin = w * 0.05;
+  const lane = (w - margin * 2) / n;
+  hoops = wall.options.map((v, i) => {
+    const x0 = margin + lane * i + S * 0.8;
+    const x1 = margin + lane * (i + 1) - S * 0.8;
+    return {
+      v, idx: i, x0, x1,
+      x: (x0 + x1) / 2,
+      dir: i % 2 ? 1 : -1,
+      speed: x1 - x0 > 8 ? w * (0.018 + 0.016 * autoDiff.level) : 0,
+      y: hoopY(),
+      color: LANE_COLORS[i % LANE_COLORS.length],
+      swish: 0,
+    };
+  });
 }
 
-function newWall() {
+function newProblem() {
   wall = genWall(autoDiff.level);
-  layoutGates();
-  wallY = topBand().y1 + gateH() * 1.15;
-  // 벽이 내려오는 데 걸리는 시간 — 문제를 읽고 계산할 시간이 있어야 하므로 넉넉하게 잡는다
-  const travelSec = [0, 6.2, 5.2, 4.4][autoDiff.level];
-  wallSpeed = (dims.h * 0.92 - wallY) / travelSec;
+  layoutHoops();
   resolving = false;
+  shot = null;
+  ballHome = ballHome || { x: dims.w / 2, y: dims.h * 0.82 };
   wallAt = performance.now();
+  shotClockTotal = [0, 14000, 12000, 10000][autoDiff.level];
+  shotClockLeft = shotClockTotal;
 }
 
 function startCountdown() {
@@ -288,11 +301,11 @@ function beginPlay() {
   state = "playing";
   const prev = HighScore.get(UNIT);
   autoDiff = new AutoDifficulty(levelFromUrl(AutoDifficulty.startLevelFromHighScore(prev)));
-  count = 0; combo = 0; maxCombo = 0; cleared = 0;
+  count = 0; combo = 0; maxCombo = 0;
   popups = []; bigPopups = []; confetti = []; sparks = [];
   playEndAt = performance.now() + 60000;
   lastFrameAt = performance.now();
-  newWall();
+  newProblem();
 
   recorder = new ClipRecorder(canvas, sound, 24);
   recorder.prepare();
@@ -309,59 +322,58 @@ function beginPlay() {
   });
 }
 
-function passWall(g) {
+// 공을 든 손이 골대에 닿으면 슛이 나간다. 공이 날아가는 동안은 결과를 미뤄 둔다.
+function shoot(hp) {
   if (resolving) return;
   resolving = true;
-  cleared++;
-  spawnSparkles(sparks, g.cx, wallY, 16, ["#fff", CUTE.sun]);
-  breakGate(g);
-  if (cleared >= WALLS_PER_GOAL) {
-    count++; combo++;
-    mascot.cheer();
-    spawnGrade(grades, dims.w / 2, dims.h * 0.52, combo);
-    if (combo > maxCombo) { maxCombo = combo; comboShot.capture(canvas); }
-    autoDiff.reportCorrect();
-    autoRec.trigger();
-    shake.trigger(8, 180);
-    spawnConfetti(confetti, dims.w / 2, dims.h * 0.3, 40);
-    spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.36, `🏀 골인! ${count}골`, CUTE.sun);
-    if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
-    cleared = 0;
-    setTimeout(() => { if (state === "playing") newWall(); }, 850);
-  } else {
-    spawnPopup(popups, g.cx, wallY - gateH() * 0.8, "돌파!", CUTE.green);
-    if (!isMuted()) sound.pop();
-    setTimeout(() => { if (state === "playing") newWall(); }, 450);
-  }
+  const from = ballHome || { x: dims.w / 2, y: dims.h * 0.85 };
+  const ok = hp.v === wall.answer;
+  shot = { from: { x: from.x, y: from.y }, to: { x: hp.x, y: hp.y }, start: performance.now(), dur: 520, ok, hoop: hp };
+  if (!isMuted()) sound.pop();
+  setTimeout(() => {
+    if (state !== "playing") return;
+    if (ok) scoreGoal(hp); else airball(hp);
+  }, 520);
 }
 
-// 통과한 문을 조각내어 흩뿌린다 — "뚫고 지나갔다"는 느낌을 눈으로 준다
-function breakGate(g) {
-  const GH = gateH();
-  for (let i = 0; i < 12; i++) {
-    debris.push({
-      x: g.cx + (Math.random() - 0.5) * g.w,
-      y: wallY + (Math.random() - 0.5) * GH,
-      vx: (Math.random() - 0.5) * dims.w * 0.5,
-      vy: -Math.random() * dims.h * 0.35,
-      s: GH * (0.14 + Math.random() * 0.16),
-      rot: Math.random() * Math.PI, spin: (Math.random() - 0.5) * 9,
-      color: g.color, life: 800, maxLife: 800,
-    });
-  }
+function scoreGoal(hp) {
+  hp.swish = performance.now();
+  count++; combo++;
+  mascot.cheer();
+  spawnGrade(grades, dims.w / 2, dims.h * 0.60, combo);
+  if (combo > maxCombo) { maxCombo = combo; comboShot.capture(canvas); }
+  autoDiff.reportCorrect();
+  autoRec.trigger();
+  shake.trigger(8, 180);
+  spawnSparkles(sparks, hp.x, hp.y, 22, ["#fff", CUTE.sun, CUTE.green]);
+  spawnConfetti(confetti, hp.x, hp.y, 38);
+  spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.66, `🏀 골인! ${count}골`, CUTE.sun);
+  if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
+  setTimeout(() => { if (state === "playing") newProblem(); }, 900);
 }
 
-function blocked(x, y, msg) {
-  if (resolving) return;
-  resolving = true;
-  combo = 0; cleared = 0;
+// 오답이면 림에 튕겨 나온다(에어볼) — 실패지만 덜 무섭게
+function airball(hp) {
+  combo = 0;
   mascot.oops();
   autoDiff.reportWrong();
   shake.trigger(5, 160);
   flashUntil = performance.now() + 450;
-  spawnPopup(popups, x, y, msg, CUTE.red);
+  spawnPopup(popups, hp.x, hp.y - hoopSize() * 0.5, "튕겨 나왔어요!", CUTE.red);
   if (!isMuted()) sound.fizzle();
-  setTimeout(() => { if (state === "playing") newWall(); }, 800);
+  setTimeout(() => { if (state === "playing") newProblem(); }, 850);
+}
+
+function timeUp() {
+  if (resolving) return;
+  resolving = true;
+  combo = 0;
+  mascot.oops();
+  autoDiff.reportWrong();
+  flashUntil = performance.now() + 450;
+  spawnPopup(popups, dims.w / 2, dims.h * 0.7, "슛 시간이 지났어요!", CUTE.red);
+  if (!isMuted()) sound.fizzle();
+  setTimeout(() => { if (state === "playing") newProblem(); }, 800);
 }
 
 function endGame() {
@@ -467,7 +479,7 @@ function loop(tsMs) {
     drawPoseHint(ctx, dims, fluidPx, poseHint(body, mode));
   }
 
-  for (const c of cursors) drawGloveCursor(ctx, c.x, c.y, fluidPx(dims, 44, { min: 32, max: 62 }), { active: cleared > 0 });
+  for (const c of cursors) drawGloveCursor(ctx, c.x, c.y, fluidPx(dims, 44, { min: 32, max: 62 }), { active: !!shot });
   ctx.restore();
 }
 
@@ -485,12 +497,69 @@ function goReady() {
 
 function drawTopPanel(ctx, remain) {
   const band = drawHudPanel(ctx, dims, fluidPx, {
-    left: "☐에 들어갈 소수의 문으로 돌파!",
+    left: "☐에 들어갈 소수의 골대에 슛!",
     right: `🔥 ${combo}   🏅 ${count}골   ⏱ ${Math.ceil(remain / 1000)}초`,
     headline: wall.text,
   });
-  // 골까지 남은 벽 — 3연속 돌파해야 슛이 열린다
-  drawPips(ctx, dims, dims.w / 2, band.y1 + fluidPx(dims, 20, { min: 14, max: 28 }), WALLS_PER_GOAL, cleared, fluidPx);
+
+  // 슛 클락 — 농구의 24초 룰처럼 한 문제를 붙들 수 있는 시간을 보여준다
+  const left = Math.max(0, shotClockLeft);
+  const total = Math.max(1, shotClockTotal);
+  const bw = dims.w * 0.34, bh = fluidPx(dims, 12, { min: 9, max: 18 });
+  const bx = dims.w / 2 - bw / 2, by = band.y1 + bh * 0.7;
+  ctx.save();
+  ctx.fillStyle = "rgba(29,43,77,0.5)";
+  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, bh / 2); ctx.fill();
+  ctx.fillStyle = left / total < 0.3 ? CUTE.red : CUTE.sun;
+  ctx.beginPath(); ctx.roundRect(bx, by, Math.max(bh, bw * (left / total)), bh, bh / 2); ctx.fill();
+  ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, bh / 2); ctx.stroke();
+  ctx.restore();
+}
+
+// 농구 골대 — 백보드에 소수가 적혀 있고, 골이 들어가면 그물이 출렁인다
+function drawHoop(ctx, hp) {
+  const S = hoopSize();
+  const bw = S * 1.55, bh = S * 0.9, by = hp.y - S * 0.72;
+  drawStickerRect(ctx, hp.x, by, bw, bh, S * 0.16, CUTE.cream, {
+    lineWidth: Math.max(3, S * 0.07), drop: Math.max(3, S * 0.06),
+  });
+  drawChunkyText(ctx, fmt(hp.v), hp.x, by, Math.min(bh * 0.58, bw * 0.32), hp.color,
+    { outline: CUTE.ink, outlineWidth: Math.max(3, S * 0.075) });
+
+  ctx.save();
+  ctx.strokeStyle = "#ff7043";
+  ctx.lineWidth = Math.max(4, S * 0.1);
+  ctx.beginPath(); ctx.ellipse(hp.x, hp.y, S * 0.46, S * 0.13, 0, 0, Math.PI * 2); ctx.stroke();
+
+  const since = performance.now() - hp.swish;
+  const swish = hp.swish && since < 700 ? 1 - since / 700 : 0;
+  ctx.strokeStyle = "rgba(255,255,255,0.9)";
+  ctx.lineWidth = Math.max(1.5, S * 0.035);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const sx = hp.x + Math.cos(a) * S * 0.46, sy = hp.y + Math.sin(a) * S * 0.13;
+    const wob = Math.sin(performance.now() / 60 + i) * S * 0.12 * swish;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.quadraticCurveTo(sx + wob, hp.y + S * 0.3, hp.x + Math.cos(a) * S * 0.16 + wob * 0.6, hp.y + S * (0.5 + swish * 0.18));
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// 눈이 달린 농구공. 손에 얹혀 따라다니다가 슛하면 날아간다.
+function drawBall(ctx, x, y, r) {
+  drawSticker(ctx, x, y, r, CUTE.orange, { lineWidth: Math.max(3, r * 0.2) });
+  ctx.save();
+  ctx.strokeStyle = CUTE.ink;
+  ctx.lineWidth = Math.max(2, r * 0.1);
+  ctx.lineCap = "round";
+  ctx.globalAlpha = 0.55;
+  ctx.beginPath(); ctx.moveTo(x - r * 0.95, y); ctx.lineTo(x + r * 0.95, y); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(x, y, r * 0.42, r * 0.95, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
+  drawMood(ctx, x, y, r * 0.8, "idle");
 }
 
 function stepGame() {
@@ -501,81 +570,60 @@ function stepGame() {
   const remain = Math.max(0, playEndAt - now);
   if (remain <= 0) { endGame(); return; }
   const armed = now - wallAt > 550;
-  const GH = gateH();
+  const S = hoopSize();
+  const R = ballR();
 
-  if (!resolving) wallY += wallSpeed * dt;
-
-  for (const d of debris) {
-    d.x += d.vx * dt; d.y += d.vy * dt; d.vy += dims.h * 1.6 * dt;
-    d.rot += d.spin * dt; d.life -= dt * 1000;
-  }
-  debris = debris.filter((d) => d.life > 0);
-
-  // 손이 문 안에 들어오면 바로 통과 판정 — 정확한 타이밍을 요구하지 않아 저학년도 억울하지 않다
-  if (armed && !resolving) {
-    for (const c of cursors) {
-      const g = gates.find((gg) => Math.abs(c.x - gg.cx) < gg.w / 2 && Math.abs(c.y - wallY) < GH * 0.75);
-      if (!g) continue;
-      if (g.v === wall.answer) passWall(g);
-      else blocked(g.cx, wallY, "수비에 막혔어요!");
-      return;
+  // 골대가 자기 구역 안에서 좌우로 오간다
+  if (!resolving) {
+    for (const hp of hoops) {
+      if (!hp.speed) continue;
+      hp.x += hp.dir * hp.speed * dt;
+      if (hp.x < hp.x0) { hp.x = hp.x0; hp.dir = 1; }
+      if (hp.x > hp.x1) { hp.x = hp.x1; hp.dir = -1; }
     }
   }
-  // 벽이 판정선을 지나쳐 버리면 공격 실패
-  if (!resolving && wallY > h * 0.92) {
-    blocked(w / 2, h * 0.86, "문을 놓쳤어요!");
-    return;
+
+  // 공은 손 위에 얹혀 따라다닌다
+  if (cursors.length) ballHome = { x: cursors[0].x, y: cursors[0].y - R * 1.15 };
+
+  // 공을 든 손이 골대에 닿으면 슛
+  if (armed && !resolving && ballHome) {
+    for (const c of cursors) {
+      const bx = c.x, by = c.y - R * 1.15;
+      const hp = hoops.find((h) => Math.hypot(bx - h.x, by - h.y) < S * 0.7);
+      if (hp) { shoot(hp); return; }
+    }
+  }
+  // 슛 클락을 넘기면 공격권을 잃는다
+  if (!resolving) {
+    shotClockLeft -= dt * 1000;
+    if (shotClockLeft <= 0) { timeUp(); return; }
   }
 
   drawCourt(ctx);
   drawTopPanel(ctx, remain);
 
-  // 판정선
-  ctx.save();
-  ctx.strokeStyle = "rgba(255,255,255,0.5)";
-  ctx.lineWidth = 3;
-  ctx.setLineDash([12, 10]);
-  ctx.beginPath(); ctx.moveTo(0, judgeY()); ctx.lineTo(w, judgeY()); ctx.stroke();
-  ctx.restore();
+  for (const hp of hoops) drawHoop(ctx, hp);
 
-  // 수비 벽 + 문
-  ctx.save();
-  ctx.fillStyle = "rgba(29,43,77,0.55)";
-  ctx.fillRect(0, wallY - GH / 2, w, GH);
-  ctx.restore();
-  for (const g of gates) {
-    drawStickerRect(ctx, g.cx, wallY, g.w, GH * 0.94, GH * 0.24, g.color, {
-      lineWidth: Math.max(3, GH * 0.09), drop: Math.max(3, GH * 0.08),
-    });
-    // 문마다 표정 — 숫자만 적힌 상자가 아니라 "지키고 선 친구"로 보이게 한다
-    drawMood(ctx, g.cx, wallY - GH * 0.24, GH * 0.30, "idle");
-    drawChunkyText(ctx, fmt(g.v), g.cx, wallY + GH * 0.22, Math.min(GH * 0.42, g.w * 0.30), "#ffffff",
-      { outline: CUTE.ink, outlineWidth: Math.max(3, GH * 0.08) });
+  // 날아가는 공 — 오답이면 림에 맞고 튕겨 나온다
+  if (shot) {
+    const t = Math.min(1, (now - shot.start) / shot.dur);
+    let bx = shot.from.x + (shot.to.x - shot.from.x) * t;
+    let by = shot.from.y + (shot.to.y - shot.from.y) * t - Math.sin(Math.PI * t) * h * 0.16;
+    if (!shot.ok && t > 0.8) {
+      const k = (t - 0.8) / 0.2;
+      bx += k * S * 0.7;
+      by += k * S * 0.5;
+    }
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.rotate(t * Math.PI * 2);
+    drawBall(ctx, 0, 0, R);
+    ctx.restore();
+  } else if (ballHome) {
+    drawBall(ctx, ballHome.x, ballHome.y, R);
   }
 
-  // 돌파한 문이 블록처럼 부서져 흩날린다
-  for (const d of debris) {
-    ctx.save();
-    ctx.globalAlpha = Math.max(0, d.life / d.maxLife);
-    ctx.translate(d.x, d.y);
-    ctx.rotate(d.rot);
-    ctx.fillStyle = d.color;
-    ctx.strokeStyle = CUTE.ink;
-    ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.roundRect(-d.s / 2, -d.s / 2, d.s, d.s, d.s * 0.25);
-    ctx.fill(); ctx.stroke();
-    ctx.restore();
-  }
-  // 벽 양옆의 수비수
-  for (const s of [-1, 1]) {
-    const x = s < 0 ? w * 0.03 : w * 0.97;
-    drawSticker(ctx, x, wallY, GH * 0.3, CUTE.redDark, { lineWidth: 3 });
-    ctx.save();
-    ctx.font = `${GH * 0.36}px ${FONT}`;
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("🛡️", x, wallY);
-    ctx.restore();
-  }
 
   if (now < flashUntil) {
     ctx.save();
@@ -590,7 +638,7 @@ function stepGame() {
   bigPopups = updateBigPopups(bigPopups, dt); drawBigPopups(ctx, bigPopups);
 
   drawVignette(ctx, w, h, 0.16);
-  drawChunkyText(ctx, "내려오는 문에 손을 넣어 돌파해요!", w / 2, h * 0.955,
+  drawChunkyText(ctx, "공을 들고 정답 골대로 가져가면 슛!", w / 2, h * 0.955,
     fluidPx(dims, 16, { min: 12, max: 21 }), "#ffffff",
     { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) });
   drawTimeUrgency(ctx, dims, fluidPx, remain);
