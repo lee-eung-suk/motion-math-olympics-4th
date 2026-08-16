@@ -241,7 +241,7 @@ function genRound(level) {
 
     // 오답 후보 3개 — 조건을 실제로 만족하지 않는 자리만 고른다
     const cands = [D];
-    const far = (p) => cands.every((q) => dist2(q, p) > (size * 0.5) ** 2)
+    const far = (p) => cands.every((q) => dist2(q, p) > (size * 0.62) ** 2)
       && [A, B, C].every((q) => dist2(q, p) > (size * 0.42) ** 2);
     const ok = (p) => fits(p) && convex(A, B, C, p) && !cond.test(classify(A, B, C, p)) && far(p);
 
@@ -314,6 +314,7 @@ let autoDiff, count, combo, maxCombo, playEndAt;
 let round, roundAt, resolving, flashUntil = 0;
 let hoverIdx = -1;   // 손이 올라가 있는 후보 자리
 let dwell = 0;       // 그 자리에 머문 시간(ms) — 스치기만 해도 판정되지 않게 한다
+let needRelease = false; // 새 라운드가 시작될 때 손이 이미 후보 위에 얹혀 있으면, 한 번 벗어나야 판정을 받는다
 const DWELL_MS = 380;
 let won = null;      // 대형 완성 연출 { start }
 let netWave = 0;
@@ -338,6 +339,7 @@ function newRound() {
   round = genRound(autoDiff.level);
   hoverIdx = -1;
   dwell = 0;
+  needRelease = true;
   won = null;
   resolving = false;
   roundAt = performance.now();
@@ -732,11 +734,14 @@ function stepGame() {
         if (d < SR * 2.2 && d < bestD) { bestD = d; hoverIdx = i; }
       });
     }
+    // 손이 후보에서 한 번 벗어나야 판정을 시작한다.
+    // 그러지 않으면 앞 라운드에서 짚은 자리에 손을 얹어 둔 채로 다음 문제가 저절로 찍힌다.
+    if (hoverIdx < 0) needRelease = false;
     if (hoverIdx !== prevHover) dwell = 0;
-    if (hoverIdx >= 0 && bestD < SR * 0.95) dwell += dt * 1000;
+    if (!needRelease && hoverIdx >= 0 && bestD < SR * 0.95) dwell += dt * 1000;
     else dwell = Math.max(0, dwell - dt * 900);
 
-    if (armed && hoverIdx >= 0 && dwell >= DWELL_MS) {
+    if (armed && !needRelease && hoverIdx >= 0 && dwell >= DWELL_MS) {
       if (hoverIdx === round.answerIdx) succeed(); else fail(hoverIdx);
       return;
     }
