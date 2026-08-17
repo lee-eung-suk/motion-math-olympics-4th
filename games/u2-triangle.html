@@ -83,11 +83,11 @@ import {
   spawnBigPopup, updateBigPopups, drawBigPopups,
   InputMode, PointerInput, StartGate, drawFallbackBackground,
   startCamera, formatFileTimestamp, fluidPx, showSoundHint,
-  drawVignette, spawnConfetti, updateConfetti, drawConfetti,
+  drawVignette,
 } from "../js/engine.js?v=2";
 import {
   CUTE, FONT, LANE_COLORS, bob, drawStickerRect, drawChunkyText,
-  spawnSparkles, updateSparkles, drawSparkles, makeDrifters, drawDrifters,
+  makeDrifters, drawDrifters,
   drawBunting, drawGloveCursor, drawLevelStars,
   drawSticker,
 } from "../js/cute.js?v=4";
@@ -250,7 +250,7 @@ const startGate = new StartGate(mode, holdFill);
 let autoDiff, count, combo, maxCombo, playEndAt;
 let round, slots, phase, chosen, roundAt, resolving, flashUntil = 0;
 let hold = new AngleHold(1200, 14);
-let popups = [], bigPopups = [], confetti = [], sparks = [];
+let popups = [], bigPopups = [];
 const shake = new ScreenShake();
 const mascot = new Mascot();
 const fever = new Fever();      // 3연속 정답이면 8초 피버
@@ -319,7 +319,7 @@ function beginPlay() {
   autoDiff = new AutoDifficulty(levelFromUrl(AutoDifficulty.startLevelFromHighScore(prev)));
   count = 0; combo = 0; maxCombo = 0;
   fever.reset(); reveal.clear(); feverBonus = 0;
-  popups = []; bigPopups = []; confetti = []; sparks = [];
+  popups = []; bigPopups = [];
   playEndAt = performance.now() + 60000;
   lastFrameAt = performance.now();
   newRound();
@@ -351,8 +351,6 @@ function succeed() {
   autoDiff.reportCorrect();
   autoRec.trigger();
   shake.trigger(7, 170);
-  spawnSparkles(sparks, dims.w / 2, dims.h * 0.5, 26, ["#fff", CUTE.sun, CUTE.green]);
-  spawnConfetti(confetti, dims.w / 2, dims.h * 0.3, 38);
   spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.34, `🤸 성공! ${count}개`, CUTE.sun);
   if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
   setTimeout(() => { if (state === "playing") newRound(); }, 700);
@@ -649,7 +647,6 @@ function stepGame() {
           phase = "hold";
           hold.reset();
           roundAt = now;
-          spawnSparkles(sparks, best.x, best.y, 14, ["#fff", CUTE.sun]);
           spawnPopup(popups, best.x, best.y - best.R, "좋아요! 이제 버티기", CUTE.green);
           if (!isMuted()) sound.pop();
         } else {
@@ -738,8 +735,6 @@ function stepGame() {
     ctx.restore();
   }
 
-  confetti = updateConfetti(confetti, dt); drawConfetti(ctx, confetti);
-  sparks = updateSparkles(sparks, dt); drawSparkles(ctx, sparks);
   popups = updatePopups(popups, dt); drawPopups(ctx, popups);
   bigPopups = updateBigPopups(bigPopups, dt); drawBigPopups(ctx, bigPopups);
 

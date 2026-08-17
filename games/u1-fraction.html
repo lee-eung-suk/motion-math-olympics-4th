@@ -83,11 +83,11 @@ import {
   spawnBigPopup, updateBigPopups, drawBigPopups,
   InputMode, PointerInput, StartGate, drawFallbackBackground,
   startCamera, formatFileTimestamp, fluidPx, showSoundHint,
-  drawVignette, spawnConfetti, updateConfetti, drawConfetti,
+  drawVignette,
 } from "../js/engine.js?v=2";
 import {
   CUTE, FONT, LANE_COLORS, bob, drawSticker, drawStickerRect, drawChunkyText,
-  spawnSparkles, updateSparkles, drawSparkles, makeDrifters, drawDrifters,
+  makeDrifters, drawDrifters,
   drawBunting, drawGloveCursor, drawLevelStars,
 } from "../js/cute.js?v=4";
 import { PoseTracker, BodyInput, drawSkeleton } from "../js/pose.js?v=1";
@@ -256,12 +256,12 @@ const holdFill = document.getElementById("holdFill");
 const startGate = new StartGate(mode, holdFill);
 
 let autoDiff, count, combo, maxCombo, playEndAt;
-let round, mates, defenders, stage, need, roundAt, resolving, flashUntil = 0, passLine = null;
+let round, mates, defenders, stage, need, roundAt, resolving, flashUntil = 0, trail = [];
 let picked = null, solvedB = null; // 식 띠에 채워 넣을 첫 번째·두 번째 분수
 let ballAt = null;                 // 공이 지금 있는 자리
 let ballFly = null;                // 날아가는 중 { from, to, start, dur }
 let netWave = 0; // 골망이 출렁이기 시작한 시각
-let popups = [], bigPopups = [], confetti = [], sparks = [];
+let popups = [], bigPopups = [];
 const shake = new ScreenShake();
 const mascot = new Mascot();
 const fever = new Fever();      // 3연속 정답이면 8초 피버
@@ -321,7 +321,7 @@ function layoutMates() {
 
 function newRound() {
   round = genRound(autoDiff.level);
-  stage = 0; need = null; passLine = null; picked = null; solvedB = null;
+  stage = 0; need = null; trail = []; picked = null; solvedB = null;
   ballAt = ballPos(); ballFly = null;
   layoutMates();
   resolving = false;
@@ -356,7 +356,7 @@ function beginPlay() {
   autoDiff = new AutoDifficulty(levelFromUrl(AutoDifficulty.startLevelFromHighScore(prev)));
   count = 0; combo = 0; maxCombo = 0;
   fever.reset(); reveal.clear(); feverBonus = 0;
-  popups = []; bigPopups = []; confetti = []; sparks = [];
+  popups = []; bigPopups = [];
   playEndAt = performance.now() + 60000;
   newRound();
 
@@ -391,10 +391,16 @@ function goal(m) {
   autoRec.trigger();
   shake.trigger(8, 180);
   netWave = performance.now();
+  // 두 번째 패스 구간도 동선에 이어 붙여 "① → ② → 골"이 하나로 이어져 보이게 한다
+  trail.push({ from: { x: ballAt.x, y: ballAt.y }, to: { x: m.x, y: m.y } });
   flyBall({ x: m.x, y: m.y }, 260);
-  setTimeout(() => { if (state === "playing") flyBall({ x: dims.w / 2, y: topBand().y1 + targetSizeGuess() }, 320); }, 270);
-  spawnSparkles(sparks, m.x, m.y, 24, ["#fff", CUTE.sun, CUTE.green]);
-  spawnConfetti(confetti, dims.w / 2, dims.h * 0.2, 40);
+  setTimeout(() => {
+    if (state === "playing") {
+      const gp = { x: dims.w / 2, y: topBand().y1 + targetSizeGuess() };
+      trail.push({ from: { x: ballAt.x, y: ballAt.y }, to: gp });
+      flyBall(gp, 320);
+    }
+  }, 270);
   spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.30, `⚽ 골인! ${count}골`, CUTE.sun);
   if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
   setTimeout(() => { if (state === "playing") newRound(); }, 700);
@@ -480,6 +486,11 @@ function distToSegment(p, a, b) {
   let t = len2 === 0 ? 0 : ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2;
   t = Math.max(0, Math.min(1, t));
   return Math.hypot(p.x - (a.x + vx * t), p.y - (a.y + vy * t));
+}
+
+// 지금 이 친구를 고르면 수비에 막힐지 미리 판정 — 짚기 전에 눈으로 볼 수 있어야 진짜 전략이 된다
+function isBlockedPath(origin, pt) {
+  return defenders.some((d) => distToSegment(d, origin, pt) < d.r * 0.8);
 }
 
 function drawCourt(ctx) {
@@ -701,7 +712,7 @@ function stepGame() {
       if (!best) continue;
 
       // 공에서 그 친구까지 패스 길에 수비수가 서 있으면 가로채기 — 빈 공간을 찾아야 한다
-      const from = stage === 0 ? ball : passLine ? passLine.to : ball;
+      const from = stage === 0 ? ball : trail.length ? trail[trail.length - 1].to : ball;
       const blocker = defenders.find((d) => distToSegment(d, from, best) < d.r * 0.8);
       if (blocker) {
         fail(blocker.x, blocker.y, "수비에 막혔어요!");
@@ -713,12 +724,11 @@ function stepGame() {
         if (!rest) { fail(best.x, best.y, "이 친구로는 만들 수 없어요"); return; }
         best.taken = true;
         need = rest;
-        passLine = { from, to: { x: best.x, y: best.y } };
+        trail.push({ from, to: { x: best.x, y: best.y } });
         stage = 1;
         picked = best.f;
         flyBall({ x: best.x, y: best.y });
         roundAt = performance.now();
-        spawnSparkles(sparks, best.x, best.y, 12, ["#fff", CUTE.sun]);
         spawnPopup(popups, best.x, best.y - best.R, "패스!", CUTE.blueDark);
         if (!isMuted()) sound.pop();
       } else {
@@ -733,33 +743,7 @@ function stepGame() {
   drawCourt(ctx);
   drawTopPanel(ctx, remain);
 
-  // 이미 성공한 패스 길
-  if (passLine) {
-    ctx.save();
-    ctx.strokeStyle = "rgba(255,255,255,0.85)";
-    ctx.lineWidth = Math.max(3, mateR() * 0.13);
-    ctx.setLineDash([12, 10]);
-    ctx.beginPath(); ctx.moveTo(passLine.from.x, passLine.from.y); ctx.lineTo(passLine.to.x, passLine.to.y); ctx.stroke();
-    ctx.restore();
-  }
-
-  // 수비수 — 찡그린 표정으로 "막고 있다"는 게 한눈에 보인다
-  for (const d of defenders) {
-    const by = bob(2.1, d.r * 0.07, d.x);
-    drawSticker(ctx, d.x, d.y + by, d.r, CUTE.redDark, { lineWidth: Math.max(3, d.r * 0.16) });
-    drawMood(ctx, d.x, d.y + by, d.r * 0.78, "sad");
-  }
-
-  // 동료들 — 얼굴은 위쪽, 분수는 아래쪽에 두어 "숫자를 든 친구"처럼 보이게 한다
-  for (const m of mates) {
-    if (m.taken) continue;
-    const by = bob(1.6, m.R * 0.06, m.idx);
-    drawSticker(ctx, m.x, m.y + by, m.R, m.color, { lineWidth: Math.max(3, m.R * 0.14) });
-    drawMood(ctx, m.x, m.y + by - m.R * 0.40, m.R * 0.42, stage === 1 ? "wow" : "idle");
-    drawFraction(ctx, m.f, m.x, m.y + by + m.R * 0.38, m.R * 0.46, "#ffffff");
-  }
-
-  // 공 — 패스할 때마다 포물선을 그리며 실제로 날아간다
+  // 공 위치를 먼저 계산해 둔다 — 패스 동선이 "지금 날아가는 위치"까지 자라나 보이게 하려면 필요하다
   let bx = ballAt ? ballAt.x : ball.x, by = ballAt ? ballAt.y : ball.y, spin = 0;
   if (ballFly) {
     const ft = Math.min(1, (performance.now() - ballFly.start) / ballFly.dur);
@@ -768,6 +752,53 @@ function stepGame() {
     spin = ft * Math.PI * 3;
     if (ft >= 1) ballFly = null;
   }
+
+  // 지나온 패스 동선 — "① → ② → 골"이 하나로 이어져 보이도록, 지난 구간은 흐리게 남기고
+  // 지금 날아가는 마지막 구간만 공의 실제 위치까지 자라나게 그린다
+  if (trail.length) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.lineWidth = Math.max(3, mateR() * 0.13);
+    ctx.setLineDash([12, 10]);
+    trail.forEach((seg, i) => {
+      const isLast = i === trail.length - 1;
+      const end = isLast && ballFly ? { x: bx, y: by } : seg.to;
+      ctx.globalAlpha = isLast ? 1 : 0.4;
+      ctx.beginPath(); ctx.moveTo(seg.from.x, seg.from.y); ctx.lineTo(end.x, end.y); ctx.stroke();
+    });
+    ctx.restore();
+  }
+
+  // 수비수 — 찡그린 표정 + 실제 판정 반경만큼 위험구역을 항상 보여줘서, 짚기 전에 피할 수 있게 한다
+  for (const d of defenders) {
+    const by2 = bob(2.1, d.r * 0.07, d.x);
+    ctx.save();
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = CUTE.red;
+    ctx.beginPath(); ctx.arc(d.x, d.y + by2, d.r * 0.8, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    drawSticker(ctx, d.x, d.y + by2, d.r, CUTE.redDark, { lineWidth: Math.max(3, d.r * 0.16) });
+    drawMood(ctx, d.x, d.y + by2, d.r * 0.78, "sad");
+  }
+
+  // 동료들 — 지금 패스하면 막히는지 미리 색 테두리로 알려준다 (초록 = 열림, 빨강 = 막힘)
+  const passOrigin = stage === 0 ? ball : trail.length ? trail[trail.length - 1].to : ball;
+  for (const m of mates) {
+    if (m.taken) continue;
+    const by2 = bob(1.6, m.R * 0.06, m.idx);
+    const blocked = isBlockedPath(passOrigin, { x: m.x, y: m.y + by2 });
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = blocked ? CUTE.red : CUTE.green;
+    ctx.lineWidth = Math.max(3, m.R * 0.16);
+    ctx.beginPath(); ctx.arc(m.x, m.y + by2, m.R * 1.12, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+    drawSticker(ctx, m.x, m.y + by2, m.R, m.color, { lineWidth: Math.max(3, m.R * 0.14) });
+    drawMood(ctx, m.x, m.y + by2 - m.R * 0.40, m.R * 0.42, stage === 1 ? "wow" : "idle");
+    drawFraction(ctx, m.f, m.x, m.y + by2 + m.R * 0.38, m.R * 0.46, "#ffffff");
+  }
+
+  // 공 — 패스할 때마다 포물선을 그리며 실제로 날아간다
   ctx.save();
   ctx.translate(bx, by);
   ctx.rotate(spin);
@@ -784,8 +815,6 @@ function stepGame() {
     ctx.restore();
   }
 
-  confetti = updateConfetti(confetti, dt); drawConfetti(ctx, confetti);
-  sparks = updateSparkles(sparks, dt); drawSparkles(ctx, sparks);
   popups = updatePopups(popups, dt); drawPopups(ctx, popups);
   bigPopups = updateBigPopups(bigPopups, dt); drawBigPopups(ctx, bigPopups);
 

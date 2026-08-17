@@ -83,11 +83,11 @@ import {
   spawnBigPopup, updateBigPopups, drawBigPopups,
   InputMode, PointerInput, StartGate, drawFallbackBackground,
   startCamera, formatFileTimestamp, fluidPx, showSoundHint,
-  drawVignette, spawnConfetti, updateConfetti, drawConfetti,
+  drawVignette,
 } from "../js/engine.js?v=2";
 import {
-  CUTE, FONT, LANE_COLORS, drawStickerRect, drawChunkyText,
-  spawnSparkles, updateSparkles, drawSparkles, makeDrifters, drawDrifters,
+  CUTE, FONT, LANE_COLORS, drawSticker, drawStickerRect, drawChunkyText,
+  makeDrifters, drawDrifters,
   drawBunting, drawGloveCursor, drawLevelStars,
 } from "../js/cute.js?v=4";
 import { PoseTracker, BodyInput, drawSkeleton } from "../js/pose.js?v=1";
@@ -259,7 +259,8 @@ const startGate = new StartGate(mode, holdFill);
 
 let autoDiff, count, combo, maxCombo, playEndAt;
 let round, rollers, roundAt, resolving, flashUntil = 0;
-let popups = [], bigPopups = [], confetti = [], sparks = [];
+let gymFx = null; // 정답 순간 매트 가운데서 보여주는 체조 동작 { start, kind, label }
+let popups = [], bigPopups = [];
 const shake = new ScreenShake();
 const mascot = new Mascot();
 const fever = new Fever();      // 3연속 정답이면 8초 피버
@@ -393,7 +394,7 @@ function beginPlay() {
   autoDiff = new AutoDifficulty(levelFromUrl(AutoDifficulty.startLevelFromHighScore(prev)));
   count = 0; combo = 0; maxCombo = 0;
   fever.reset(); reveal.clear(); feverBonus = 0;
-  popups = []; bigPopups = []; confetti = []; sparks = [];
+  popups = []; bigPopups = []; gymFx = null;
   playEndAt = performance.now() + 60000;
   lastFrameAt = performance.now();
   newRound();
@@ -420,7 +421,6 @@ function succeed(r) {
   // 「모양 채우기」는 조각을 한 칸씩 끼운다. 틀이 다 차야 한 개로 친다.
   if (round.fill && round.filled < round.frame.slots.length - 1) {
     round.filled++;
-    spawnSparkles(sparks, framePos().x, framePos().y, 16, ["#fff", CUTE.sun]);
     spawnPopup(popups, framePos().x, framePos().y - frameR(), `${round.filled}칸 채웠다!`, CUTE.green);
     if (!isMuted()) sound.pop();
     setTimeout(() => { if (state === "playing") { spawnWave(); } }, 420);
@@ -437,8 +437,10 @@ function succeed(r) {
   autoDiff.reportCorrect();
   autoRec.trigger();
   shake.trigger(7, 170);
-  spawnSparkles(sparks, ringPos().x, ringPos().y, 24, ["#fff", CUTE.sun, CUTE.green]);
-  spawnConfetti(confetti, ringPos().x, ringPos().y, 34);
+  // 정답을 맞힐 때마다 매트 가운데서 짧은 체조 동작을 보여준다 — 콤보가 오를수록 더 화려해진다
+  const gymKind = combo >= 6 ? "balance" : combo >= 3 ? "star" : "roll";
+  const gymLabel = gymKind === "balance" ? "균형 자세!" : gymKind === "star" ? "별동작!" : "데굴데굴 구르기!";
+  gymFx = { start: performance.now(), kind: gymKind, label: gymLabel };
   spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.42,
     round.fill
       ? `🧩 ${round.frame.name} 완성! ${count}개`
@@ -633,6 +635,64 @@ function drawTopPanel(ctx, remain) {
   });
 }
 
+// 정답을 맞힐 때마다 매트 가운데서 짧은 체조 동작을 보여준다 — 콤보가 높을수록 화려한 동작으로 발전한다
+function drawGymMove(ctx) {
+  if (!gymFx) return;
+  const el = performance.now() - gymFx.start;
+  const dur = 900;
+  if (el > dur) { gymFx = null; return; }
+  const t = el / dur;
+  const fade = t > 0.78 ? Math.max(0, 1 - (t - 0.78) / 0.22) : 1;
+  const m = matRect();
+  const cx = (m.x0 + m.x1) / 2, cy = (m.y0 + m.y1) / 2;
+  const R = fluidPx(dims, 62, { min: 46, max: 90 });
+
+  ctx.save();
+  ctx.globalAlpha = fade;
+  ctx.translate(cx, cy);
+
+  if (gymFx.kind === "roll") {
+    // 데굴데굴 구르기 — 통째로 회전하며 살짝 튀어오른다
+    ctx.translate(0, -Math.sin(t * Math.PI) * R * 0.9);
+    ctx.rotate(t * Math.PI * 4.2);
+    drawSticker(ctx, 0, 0, R, CUTE.sun, { lineWidth: Math.max(3, R * 0.13) });
+    drawMood(ctx, 0, 0, R * 0.85, "happy");
+  } else if (gymFx.kind === "star") {
+    // 별동작 — 점프하며 팔다리를 쫙 펼친다
+    ctx.translate(0, -Math.sin(t * Math.PI) * R * 1.1);
+    const spread = Math.sin(Math.min(1, t * 1.6) * Math.PI / 2) * R;
+    ctx.strokeStyle = CUTE.ink;
+    ctx.lineWidth = Math.max(4, R * 0.16);
+    ctx.lineCap = "round";
+    for (const s of [-1, 1]) {
+      ctx.beginPath(); ctx.moveTo(0, -R * 0.1); ctx.lineTo(s * spread * 0.9, -R * 0.9); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, R * 0.5); ctx.lineTo(s * spread * 0.75, R * 1.3); ctx.stroke();
+    }
+    drawSticker(ctx, 0, 0, R * 0.75, CUTE.sun, { lineWidth: Math.max(3, R * 0.12) });
+    drawMood(ctx, 0, 0, R * 0.62, "happy");
+  } else {
+    // 균형 자세 — 한쪽 팔다리를 뻗은 채 살짝 흔들리며 버틴다
+    ctx.rotate(Math.sin(performance.now() / 140) * 0.05);
+    ctx.strokeStyle = CUTE.ink;
+    ctx.lineWidth = Math.max(4, R * 0.15);
+    ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(0, R * 0.2); ctx.lineTo(-R * 0.15, R * 1.45); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, R * 0.2); ctx.lineTo(R * 1.15, R * 0.55); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, -R * 0.1); ctx.lineTo(-R * 1.0, -R * 0.55); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, -R * 0.1); ctx.lineTo(R * 0.65, -R * 0.95); ctx.stroke();
+    drawSticker(ctx, 0, 0, R * 0.72, CUTE.sun, { lineWidth: Math.max(3, R * 0.12) });
+    drawMood(ctx, 0, 0, R * 0.6, "happy");
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalAlpha = fade;
+  drawChunkyText(ctx, gymFx.label, cx, cy - R * 1.7,
+    fluidPx(dims, 18, { min: 14, max: 26 }), "#ffffff",
+    { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) });
+  ctx.restore();
+}
+
 function stepGame() {
   const { ctx, w, h } = dims;
   const now = performance.now();
@@ -720,6 +780,8 @@ function stepGame() {
     drawAnswerRing(ctx, dims, fluidPx, r.x, r.y, r.R * 1.2, reveal.data.label);
   }
 
+  drawGymMove(ctx);
+
   if (now < flashUntil) {
     ctx.save();
     ctx.fillStyle = "rgba(255,107,107,0.18)";
@@ -727,8 +789,6 @@ function stepGame() {
     ctx.restore();
   }
 
-  confetti = updateConfetti(confetti, dt); drawConfetti(ctx, confetti);
-  sparks = updateSparkles(sparks, dt); drawSparkles(ctx, sparks);
   popups = updatePopups(popups, dt); drawPopups(ctx, popups);
   bigPopups = updateBigPopups(bigPopups, dt); drawBigPopups(ctx, bigPopups);
 

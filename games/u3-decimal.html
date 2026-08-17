@@ -83,11 +83,11 @@ import {
   spawnBigPopup, updateBigPopups, drawBigPopups,
   InputMode, PointerInput, StartGate, drawFallbackBackground,
   startCamera, formatFileTimestamp, fluidPx, showSoundHint,
-  drawVignette, spawnConfetti, updateConfetti, drawConfetti,
+  drawVignette,
 } from "../js/engine.js?v=2";
 import {
-  CUTE, FONT, LANE_COLORS, drawSticker, drawStickerRect, drawChunkyText,
-  spawnSparkles, updateSparkles, drawSparkles, makeDrifters, drawDrifters,
+  CUTE, FONT, LANE_COLORS, bob, drawSticker, drawStickerRect, drawChunkyText,
+  makeDrifters, drawDrifters,
   drawBunting, drawGloveCursor, drawLevelStars,
 } from "../js/cute.js?v=4";
 import { PoseTracker, BodyInput, drawSkeleton } from "../js/pose.js?v=1";
@@ -104,7 +104,7 @@ const TITLE = "소수 돌파 드리블";
 const RECORD_SUFFIX = "골";
 const MEDALS = { bronze: 5, silver: 8, gold: 12 };
 const mode = InputMode.get();
-const RULE = { emoji: "⛹️", title: "소수 돌파 드리블", rule: "농구공을 손에 들고, ☐에 들어갈 소수가 적힌 골대로 가져가면 슛! 골대는 좌우로 움직여요." };
+const RULE = { emoji: "⛹️", title: "소수 돌파 드리블", rule: "가운데 놓인 공을 잡아, 수비수를 피해 ☐에 들어갈 소수가 적힌 골대로 가져가면 슛! 슛을 하고 나면 공은 다시 가운데로 돌아가요." };
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("gameCanvas");
@@ -228,8 +228,10 @@ let wall, hoops, resolving, wallAt, flashUntil = 0;
 let shot = null;        // 날아가는 공 { from, to, start, dur, ok, hoop }
 let shotClockLeft = 0;  // 농구 24초 룰처럼 한 문제를 붙들 수 있는 시간(ms, 프레임 dt로 깎는다)
 let shotClockTotal = 1;
-let ballHome = null;    // 공이 얹혀 있는 손 위치
-let popups = [], bigPopups = [], confetti = [], sparks = [];
+let ballHome = null;    // 공의 현재 자리(놓여 있을 때는 시작 지점, 들었을 때는 손 위치)
+let carrying = false;   // 지금 손으로 공을 들고 있는지
+let defenders = [];     // 시작 지점과 골대 사이를 오가며 공을 뺏으려는 수비수
+let popups = [], bigPopups = [];
 const shake = new ScreenShake();
 const mascot = new Mascot();
 const fever = new Fever();      // 3연속 정답이면 8초 피버
@@ -245,6 +247,26 @@ function topBand() { return hudBand(dims); }
 function hoopSize() { return fluidPx(dims, 76, { min: 56, max: 108 }); }
 function hoopY() { return dims.h * 0.40; }
 function ballR() { return fluidPx(dims, 34, { min: 25, max: 50 }); }
+function startSpot() { return { x: dims.w / 2, y: dims.h * 0.86 }; }
+function defenderR() { return fluidPx(dims, 42, { min: 32, max: 60 }); }
+
+// 시작 지점과 골대 사이를 오가며 공을 뺏으려는 수비수 — 레벨이 오를수록 늘어난다
+function layoutDefenders() {
+  const { w, h } = dims;
+  const r = defenderR();
+  const dn = autoDiff.level === 1 ? 1 : autoDiff.level === 2 ? 2 : 3;
+  defenders = [];
+  for (let i = 0; i < dn; i++) {
+    defenders.push({
+      x: w * (0.25 + 0.5 * Math.random()),
+      y: h * (0.54 + 0.05 * i),
+      vx: (Math.random() < 0.5 ? -1 : 1) * w * (0.09 + 0.03 * autoDiff.level),
+      vy: (Math.random() < 0.5 ? -1 : 1) * h * 0.035,
+      y0: h * 0.50, y1: h * 0.72,
+      r,
+    });
+  }
+}
 
 // 골대는 각자 자기 구역 안에서 좌우로 오간다 — 서로 겹치지 않으면서 "슛 타이밍"이 생긴다
 function layoutHoops() {
@@ -271,9 +293,12 @@ function layoutHoops() {
 function newProblem() {
   wall = genWall(autoDiff.level);
   layoutHoops();
+  layoutDefenders();
   resolving = false;
   shot = null;
-  ballHome = ballHome || { x: dims.w / 2, y: dims.h * 0.82 };
+  // 정답이든 오답이든 슛을 하고 나면 공은 항상 시작 지점으로 돌아간다 — 다시 가서 잡아야 한다
+  ballHome = startSpot();
+  carrying = false;
   wallAt = performance.now();
   shotClockTotal = [0, 14000, 12000, 10000][autoDiff.level];
   shotClockLeft = shotClockTotal;
@@ -307,7 +332,7 @@ function beginPlay() {
   autoDiff = new AutoDifficulty(levelFromUrl(AutoDifficulty.startLevelFromHighScore(prev)));
   count = 0; combo = 0; maxCombo = 0;
   fever.reset(); reveal.clear(); feverBonus = 0;
-  popups = []; bigPopups = []; confetti = []; sparks = [];
+  popups = []; bigPopups = [];
   playEndAt = performance.now() + 60000;
   lastFrameAt = performance.now();
   newProblem();
@@ -333,6 +358,7 @@ function shoot(hp) {
   resolving = true;
   const from = ballHome || { x: dims.w / 2, y: dims.h * 0.85 };
   const ok = hp.v === wall.answer;
+  carrying = false; // 슛이 나가는 순간 손을 떠난다
   shot = { from: { x: from.x, y: from.y }, to: { x: hp.x, y: hp.y }, start: performance.now(), dur: 520, ok, hoop: hp };
   if (!isMuted()) sound.pop();
   setTimeout(() => {
@@ -352,8 +378,6 @@ function scoreGoal(hp) {
   autoDiff.reportCorrect();
   autoRec.trigger();
   shake.trigger(8, 180);
-  spawnSparkles(sparks, hp.x, hp.y, 22, ["#fff", CUTE.sun, CUTE.green]);
-  spawnConfetti(confetti, hp.x, hp.y, 38);
   spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.66, `🏀 골인! ${count}골`, CUTE.sun);
   if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
   setTimeout(() => { if (state === "playing") newProblem(); }, 700);
@@ -596,19 +620,48 @@ function stepGame() {
     }
   }
 
-  // 공은 손 위에 얹혀 따라다닌다
-  // 손 위에서 공이 통통 튄다 — 드리블하는 느낌
-  const dribble = Math.abs(Math.sin(now / 190)) * R * 0.5;
-  if (cursors.length) ballHome = { x: cursors[0].x, y: cursors[0].y - R * 1.15 - dribble };
-
-  // 공을 든 손이 골대에 닿으면 슛
-  if (armed && !resolving && ballHome) {
-    for (const c of cursors) {
-      const bx = c.x, by = c.y - R * 1.15 - dribble;
-      const hp = hoops.find((h) => Math.hypot(bx - h.x, by - h.y) < S * 0.7);
-      if (hp) { shoot(hp); return; }
+  // 수비수는 시작 지점과 골대 사이를 오가며 공을 뺏으려 한다
+  if (!resolving) {
+    for (const d of defenders) {
+      d.x += d.vx * dt; d.y += d.vy * dt;
+      if (d.x < w * 0.10 || d.x > w * 0.90) d.vx *= -1;
+      if (d.y < d.y0 || d.y > d.y1) d.vy *= -1;
     }
   }
+
+  const dribble = Math.abs(Math.sin(now / 190)) * R * 0.5;
+
+  if (!carrying) {
+    // 공은 시작 지점(또는 뺏긴 자리)에 놓여 있다 — 손을 가져가야 잡는다
+    if (armed && !resolving && cursors.length) {
+      for (const c of cursors) {
+        if (Math.hypot(c.x - ballHome.x, c.y - ballHome.y) < R * 1.6) {
+          carrying = true;
+          if (!isMuted()) sound.pop();
+          break;
+        }
+      }
+    }
+  } else {
+    // 손 위에 얹힌 공이 따라다니며 통통 튄다 — 드리블하는 느낌
+    if (cursors.length) ballHome = { x: cursors[0].x, y: cursors[0].y - R * 1.15 - dribble };
+
+    // 수비수에 닿으면 공을 놓친다 — 다시 시작 지점에서 잡아야 한다
+    const stolen = defenders.find((d) => Math.hypot(ballHome.x - d.x, ballHome.y - d.y) < d.r * 0.75 + R * 0.6);
+    if (stolen) {
+      carrying = false;
+      ballHome = startSpot();
+      spawnPopup(popups, stolen.x, stolen.y - stolen.r, "수비에 뺏겼어요!", CUTE.red);
+      if (!isMuted()) sound.fizzle();
+    } else if (armed && !resolving) {
+      for (const c of cursors) {
+        const bx = c.x, by = c.y - R * 1.15 - dribble;
+        const hp = hoops.find((h) => Math.hypot(bx - h.x, by - h.y) < S * 0.7);
+        if (hp) { shoot(hp); return; }
+      }
+    }
+  }
+
   // 슛 클락을 넘기면 공격권을 잃는다
   if (!resolving) {
     shotClockLeft -= dt * 1000;
@@ -619,6 +672,13 @@ function stepGame() {
   drawTopPanel(ctx, remain);
 
   for (const hp of hoops) drawHoop(ctx, hp);
+
+  // 수비수 — 찡그린 표정으로 앞을 가로막는다
+  for (const d of defenders) {
+    const dby = bob(2.1, d.r * 0.07, d.x);
+    drawSticker(ctx, d.x, d.y + dby, d.r, CUTE.redDark, { lineWidth: Math.max(3, d.r * 0.16) });
+    drawMood(ctx, d.x, d.y + dby, d.r * 0.78, "sad");
+  }
 
   // 틀렸으면 정답 골대를 초록 링으로 짚어 준다
   if (reveal.on) {
@@ -642,7 +702,16 @@ function stepGame() {
     drawBall(ctx, 0, 0, R);
     ctx.restore();
   } else if (ballHome) {
-    drawBall(ctx, ballHome.x, ballHome.y, R);
+    if (!carrying) {
+      // 놓여 있는 공은 살짝 두둥실 떠 있어 "잡으러 오라"는 신호를 준다
+      const pulse = Math.sin(now / 260) * R * 0.12;
+      drawBall(ctx, ballHome.x, ballHome.y + pulse, R * (1 + Math.sin(now / 260) * 0.04));
+      drawChunkyText(ctx, "공을 잡으세요!", ballHome.x, ballHome.y - R * 1.5,
+        fluidPx(dims, 15, { min: 11, max: 20 }), "#ffffff",
+        { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) });
+    } else {
+      drawBall(ctx, ballHome.x, ballHome.y, R);
+    }
   }
 
 
@@ -653,13 +722,11 @@ function stepGame() {
     ctx.restore();
   }
 
-  confetti = updateConfetti(confetti, dt); drawConfetti(ctx, confetti);
-  sparks = updateSparkles(sparks, dt); drawSparkles(ctx, sparks);
   popups = updatePopups(popups, dt); drawPopups(ctx, popups);
   bigPopups = updateBigPopups(bigPopups, dt); drawBigPopups(ctx, bigPopups);
 
   drawVignette(ctx, w, h, 0.16);
-  drawChunkyText(ctx, "공을 들고 정답 골대로 가져가면 슛!", w / 2, h * 0.955,
+  drawChunkyText(ctx, carrying ? "수비수를 피해 정답 골대로!" : "공을 잡으러 가세요!", w / 2, h * 0.955,
     fluidPx(dims, 16, { min: 12, max: 21 }), "#ffffff",
     { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) });
   drawTimeUrgency(ctx, dims, fluidPx, remain);

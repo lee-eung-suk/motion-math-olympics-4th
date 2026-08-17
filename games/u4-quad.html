@@ -82,11 +82,11 @@ import {
   spawnBigPopup, updateBigPopups, drawBigPopups,
   InputMode, PointerInput, StartGate, drawFallbackBackground,
   startCamera, formatFileTimestamp, fluidPx, showSoundHint,
-  drawVignette, spawnConfetti, updateConfetti, drawConfetti,
+  drawVignette,
 } from "../js/engine.js?v=2";
 import {
   CUTE, FONT, LANE_COLORS, bob, drawSticker, drawChunkyText,
-  spawnSparkles, updateSparkles, drawSparkles, makeDrifters, drawDrifters,
+  makeDrifters, drawDrifters,
   drawBunting, drawGloveCursor, drawLevelStars,
 } from "../js/cute.js?v=4";
 import { PoseTracker, BodyInput, drawSkeleton } from "../js/pose.js?v=1";
@@ -201,7 +201,8 @@ function genRound(level) {
   const cond = pick(CONDS[level]);
   const c = court();
   for (let attempt = 0; attempt < 400; attempt++) {
-    const size = 0.28 + Math.random() * 0.10;
+    // 코트 전체를 쓰도록 크게 벌려서, 손만 뻗지 않고 실제로 걸어서 이동해야 짚을 수 있게 한다
+    const size = 0.38 + Math.random() * 0.14;
     const th = Math.random() * Math.PI * 2;
     let u, v, k = 1;
 
@@ -318,7 +319,7 @@ let needRelease = false; // 새 라운드가 시작될 때 손이 이미 후보 
 const DWELL_MS = 380;
 let won = null;      // 대형 완성 연출 { start }
 let netWave = 0;
-let popups = [], bigPopups = [], confetti = [], sparks = [];
+let popups = [], bigPopups = [];
 const shake = new ScreenShake();
 const mascot = new Mascot();
 const fever = new Fever();      // 3연속 정답이면 8초 피버
@@ -373,7 +374,7 @@ function beginPlay() {
   autoDiff = new AutoDifficulty(levelFromUrl(AutoDifficulty.startLevelFromHighScore(prev)));
   count = 0; combo = 0; maxCombo = 0;
   fever.reset(); reveal.clear(); feverBonus = 0;
-  popups = []; bigPopups = []; confetti = []; sparks = [];
+  popups = []; bigPopups = [];
   playEndAt = performance.now() + 60000;
   lastFrameAt = performance.now();
   newRound();
@@ -404,7 +405,6 @@ function succeed() {
   if (combo > maxCombo) { maxCombo = combo; comboShot.capture(canvas); }
   autoDiff.reportCorrect();
   autoRec.trigger();
-  spawnSparkles(sparks, toScreen(round.spots[round.answerIdx]).x, toScreen(round.spots[round.answerIdx]).y, 16, ["#fff", CUTE.sun]);
   if (!isMuted()) sound.pop();
 
   setTimeout(() => {
@@ -413,7 +413,6 @@ function succeed() {
     spawnGrade(grades, dims.w / 2, dims.h * 0.30, combo);
     netWave = performance.now();
     shake.trigger(8, 190);
-    spawnConfetti(confetti, goalPos().x, goalPos().y, 40);
     spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.82, `🤾 대형 완성! ${count}개`, CUTE.sun);
     if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
   }, 1050);
@@ -874,8 +873,6 @@ function stepGame() {
     ctx.restore();
   }
 
-  confetti = updateConfetti(confetti, dt); drawConfetti(ctx, confetti);
-  sparks = updateSparkles(sparks, dt); drawSparkles(ctx, sparks);
   popups = updatePopups(popups, dt); drawPopups(ctx, popups);
   bigPopups = updateBigPopups(bigPopups, dt); drawBigPopups(ctx, bigPopups);
 

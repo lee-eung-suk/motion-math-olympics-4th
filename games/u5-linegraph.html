@@ -83,11 +83,11 @@ import {
   spawnBigPopup, updateBigPopups, drawBigPopups,
   InputMode, PointerInput, StartGate, drawFallbackBackground,
   startCamera, formatFileTimestamp, fluidPx, showSoundHint,
-  drawVignette, spawnConfetti, updateConfetti, drawConfetti,
+  drawVignette,
 } from "../js/engine.js?v=2";
 import {
-  CUTE, FONT, drawSticker, drawStickerRect, drawChunkyText,
-  spawnSparkles, updateSparkles, drawSparkles, makeDrifters, drawDrifters,
+  CUTE, FONT, LANE_COLORS, drawSticker, drawStickerRect, drawChunkyText,
+  makeDrifters, drawDrifters,
   drawBunting, drawGloveCursor, drawLevelStars,
 } from "../js/cute.js?v=4";
 import { PoseTracker, BodyInput, drawSkeleton } from "../js/pose.js?v=1";
@@ -104,7 +104,7 @@ const TITLE = "꺾은선 스코어보드";
 const RECORD_SUFFIX = "개";
 const MEDALS = { bronze: 5, silver: 8, gold: 11 };
 const mode = InputMode.get();
-const RULE = { emoji: "📈", title: "꺾은선 스코어보드", rule: "꺾은선그래프를 읽고 문제에 맞는 점이나 구간을 짚으면 공이 골대로 날아가요." };
+const RULE = { emoji: "📈", title: "꺾은선 스코어보드", rule: "위쪽 꺾은선그래프를 읽고, 답에 해당하는 이름표가 붙은 자리로 뛰어가 짚으면 공이 골대로 날아가요!" };
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("gameCanvas");
@@ -228,10 +228,10 @@ const holdFill = document.getElementById("holdFill");
 const startGate = new StartGate(mode, holdFill);
 
 let autoDiff, count, combo, maxCombo, playEndAt;
-let round, plot, roundAt, resolving, flashUntil = 0;
+let round, plot, bases, roundAt, resolving, flashUntil = 0;
 let goalFx = null; // 정답 순간의 대형 골인 연출 { start, from }
-let hover = null;  // 손이 올라가 있는 점·구간 (짚기 전에 미리 보여준다)
-let popups = [], bigPopups = [], confetti = [], sparks = [];
+let hover = null;  // 손이 올라가 있는 베이스 (짚기 전에 미리 보여준다)
+let popups = [], bigPopups = [];
 const shake = new ScreenShake();
 const mascot = new Mascot();
 const fever = new Fever();      // 3연속 정답이면 8초 피버
@@ -245,13 +245,14 @@ let lastFrameAt = performance.now();
 
 function topBand() { return hudBand(dims); }
 function hitR() { return fluidPx(dims, 30, { min: 22, max: 44 }); }
+function baseR() { return fluidPx(dims, 42, { min: 32, max: 60 }); }
 
-// 그래프 좌표 계산 — 화면이 바뀌어도 판정 위치와 그림이 항상 같은 값을 쓰도록 한 곳에 모았다
+// 그래프는 이제 "읽는 자료"로만 쓴다 — 위쪽에 작게 두고, 실제로 짚는 베이스는 코트 전체에 흩어 놓는다
 function layoutGraph() {
   const { w, h } = dims;
   const band = topBand();
   const x0 = w * 0.13, x1 = w * 0.88;
-  const y0 = band.y1 + h * 0.11, y1 = h * 0.85;
+  const y0 = band.y1 + h * 0.09, y1 = y0 + h * 0.20;
   const maxUnits = 8;
   const px = (i) => x0 + ((x1 - x0) * (i + 0.5)) / round.n;
   const py = (k) => y1 - ((y1 - y0) * k) / maxUnits;
@@ -266,9 +267,43 @@ function layoutGraph() {
   };
 }
 
+// 그래프를 읽고 나서 정답에 해당하는 베이스까지 뛰어가야 한다 — 그래프 위 순서와 다르게 뒤섞어
+// 놓아서, 위치를 외우는 게 아니라 라벨(며칠/몇 시 등)을 읽고 찾아야 하게 만든다
+function layoutBases() {
+  const { w, h } = dims;
+  const band = topBand();
+  const top = plot.y1 + h * 0.12, bottom = h * 0.90;
+  const left = w * 0.08, right = w * 0.92;
+  const isSeg = round.question.kind === "seg";
+  const src = isSeg ? plot.segs : plot.pts;
+  const labels = round.topic.xLabels(round.n);
+  const n = src.length;
+  const rows = n <= 4 ? 1 : 2;
+  const cols = Math.ceil(n / rows);
+  const cellW = (right - left) / cols, cellH = (bottom - top) / Math.max(1, rows);
+  const order = src.map((_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  bases = order.map((srcIdx, cell) => {
+    const col = cell % cols, row = Math.floor(cell / cols);
+    const jx = (Math.random() - 0.5) * cellW * 0.3;
+    const jy = (Math.random() - 0.5) * cellH * 0.3;
+    return {
+      i: srcIdx,
+      x: left + cellW * (col + 0.5) + jx,
+      y: top + cellH * (row + 0.5) + jy,
+      label: isSeg ? `${labels[srcIdx]}→${labels[srcIdx + 1]}` : labels[srcIdx],
+      color: LANE_COLORS[srcIdx % LANE_COLORS.length],
+    };
+  });
+}
+
 function newRound() {
   round = genRound(autoDiff.level);
   layoutGraph();
+  layoutBases();
   resolving = false;
   goalFx = null;
   hover = null;
@@ -303,7 +338,7 @@ function beginPlay() {
   autoDiff = new AutoDifficulty(levelFromUrl(AutoDifficulty.startLevelFromHighScore(prev)));
   count = 0; combo = 0; maxCombo = 0;
   fever.reset(); reveal.clear(); feverBonus = 0;
-  popups = []; bigPopups = []; confetti = []; sparks = [];
+  popups = []; bigPopups = [];
   playEndAt = performance.now() + 60000;
   lastFrameAt = performance.now();
   newRound();
@@ -335,14 +370,12 @@ function succeed(x, y) {
   autoDiff.reportCorrect();
   autoRec.trigger();
   goalFx = { start: performance.now(), from: { x, y } };
-  spawnSparkles(sparks, x, y, 20, ["#fff", CUTE.sun, CUTE.green]);
   if (!isMuted()) sound.pop();
 
   // 공이 골망에 꽂히는 순간
   setTimeout(() => {
     if (state !== "playing") return;
     shake.trigger(9, 220);
-    spawnConfetti(confetti, dims.w / 2, dims.h * 0.5, 46);
     spawnBigPopup(bigPopups, dims.w / 2, dims.h * 0.78, GOAL_TEXT(), CUTE.sun);
     if (!isMuted()) { sound.success(); if (combo >= 3 && combo % 3 === 0) sound.fever(); }
   }, 760);
@@ -433,9 +466,8 @@ function fail(x, y, msg) {
   autoDiff.reportWrong();
   shake.trigger(4, 150);
   flashUntil = performance.now() + 450;
-  const list = round.question.kind === "seg" ? plot.segs : plot.pts;
-  const ans = list.find((q) => q.i === round.question.idx);
-  if (ans) reveal.show({ x: ans.x, y: ans.y, r: hitR() * 1.1, label: "여기예요!" });
+  const ans = bases.find((q) => q.i === round.question.idx);
+  if (ans) reveal.show({ x: ans.x, y: ans.y, r: baseR() * 1.15, label: "여기예요!" });
   spawnPopup(popups, x, y, msg, CUTE.red);
   if (!isMuted()) sound.fizzle();
   setTimeout(() => { if (state === "playing") newRound(); }, 1400);
@@ -669,6 +701,27 @@ function drawGraph(ctx) {
   }
 }
 
+// 그래프에서 읽어낸 답을 짚으러 뛰어가는 베이스들 — 라벨을 읽고 찾아야 하도록 순서를 섞어 흩어 놓았다
+function drawBases(ctx) {
+  const R = baseR();
+  const now = performance.now();
+  for (const b of bases) {
+    const isHover = hover && hover.i === b.i;
+    const by = Math.sin(now / 480 + b.x) * R * 0.08;
+    ctx.save();
+    if (isHover) {
+      ctx.beginPath(); ctx.arc(b.x, b.y + by, R * 1.32, 0, Math.PI * 2);
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = fluidPx(dims, 4, { min: 3, max: 6 });
+      ctx.stroke();
+    }
+    ctx.restore();
+    drawSticker(ctx, b.x, b.y + by, R, b.color, { lineWidth: Math.max(3, R * 0.14), drop: 2 });
+    drawChunkyText(ctx, b.label, b.x, b.y + by, fluidPx(dims, 17, { min: 13, max: 23 }), "#ffffff",
+      { outline: CUTE.ink, outlineWidth: fluidPx(dims, 4, { min: 3, max: 6 }) });
+  }
+}
+
 function stepGame() {
   const { ctx, w, h } = dims;
   const now = performance.now();
@@ -677,39 +730,38 @@ function stepGame() {
   const remain = Math.max(0, playEndAt - now);
   if (remain <= 0) { endGame(); return; }
   const armed = now - roundAt > 550;
-  const R = hitR();
+  const BR = baseR();
 
-  // 손이 올라가 있는 곳을 미리 표시해 준다 — 짚어보기 전에는 아무 표시가 없어 답답했다
+  // 손이 올라가 있는 베이스를 미리 표시해 준다 — 짚어보기 전에는 아무 표시가 없어 답답했다
   hover = null;
   {
-    const targets = round.question.kind === "seg" ? plot.segs : plot.pts;
     let near = null, nearD = Infinity;
     for (const c of cursors) {
-      for (const q of targets) {
+      for (const q of bases) {
         const d = Math.hypot(c.x - q.x, c.y - q.y);
-        if (d < R * 1.6 && d < nearD) { nearD = d; near = q; }
+        if (d < BR * 1.5 && d < nearD) { nearD = d; near = q; }
       }
     }
     if (near) hover = { kind: round.question.kind, i: near.i };
   }
 
   if (armed && !resolving) {
-    const targets = round.question.kind === "seg" ? plot.segs : plot.pts;
     let best = null, bestD = Infinity;
     for (const c of cursors) {
-      for (const t of targets) {
+      for (const t of bases) {
         const d = Math.hypot(c.x - t.x, c.y - t.y);
-        if (d < R && d < bestD) { bestD = d; best = t; }
+        if (d < BR && d < bestD) { bestD = d; best = t; }
       }
     }
     if (best) {
       if (best.i === round.question.idx) { succeed(best.x, best.y); }
-      else fail(best.x, best.y - R, "그래프를 다시 봐요!");
+      else fail(best.x, best.y - BR, "그래프를 다시 봐요!");
     }
   }
 
   drawTopPanel(ctx, remain);
   drawGraph(ctx);
+  drawBases(ctx);
 
   if (reveal.on) drawAnswerRing(ctx, dims, fluidPx, reveal.data.x, reveal.data.y, reveal.data.r, reveal.data.label);
 
@@ -723,14 +775,12 @@ function stepGame() {
     ctx.restore();
   }
 
-  confetti = updateConfetti(confetti, dt); drawConfetti(ctx, confetti);
-  sparks = updateSparkles(sparks, dt); drawSparkles(ctx, sparks);
   popups = updatePopups(popups, dt); drawPopups(ctx, popups);
   bigPopups = updateBigPopups(bigPopups, dt); drawBigPopups(ctx, bigPopups);
 
   drawVignette(ctx, w, h, 0.16);
   drawChunkyText(ctx,
-    round.question.kind === "seg" ? "선분 가운데의 노란 동그라미를 짚어요!" : "그래프의 점을 짚어요!",
+    "그래프를 읽고, 답에 맞는 자리로 뛰어가 짚어요!",
     w / 2, h * 0.955, fluidPx(dims, 15, { min: 11, max: 20 }), "#ffffff",
     { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) });
   drawTimeUrgency(ctx, dims, fluidPx, remain);
