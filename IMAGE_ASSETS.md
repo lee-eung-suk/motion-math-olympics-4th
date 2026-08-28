@@ -47,7 +47,88 @@ Absolutely no text, no letters, no numbers written anywhere.
 
 ---
 
-## 1️⃣ 종목 카드 썸네일 6장 (572 × 362)
+## 🆕 카드형 스타일 (제목 배너 + 흰 배경 + 설명글 없음)
+
+다른 학년판 카드를 참고해서 만드는 새 버전입니다. 아래 기준으로 6장을 새로 만듭니다.
+
+- **제목은 그림 안에 굽습니다** (`단원 N` 배지 + 종목 이름) — 그래야 카드가 그림 하나로 완결됩니다
+- **설명 문장은 넣지 않습니다** — 참고 이미지에 있던 "~을 익혀요" 같은 밑줄 문장은 뺍니다
+- **배경은 흰색**에 가깝게, 장식은 최소화합니다
+- 숫자·수식(예: `3/4`, `0.4+0.3`, `1m 25cm`)은 **한글보다 훨씬 잘 나오니** 적극적으로 활용합니다. 문제는 **한글 제목**인데, 대부분의 생성기가 아직 약합니다 — 결과물에서 글자가 깨지면 그 부분만 캔바/파워포인트로 다시 얹으세요. (참고 이미지 수준의 정확한 한글은 Gemini/Imagen, Ideogram 계열이 상대적으로 낫습니다.)
+
+### 공통 스타일 (아래 6개 프롬프트 앞에 공통으로 붙이세요)
+
+```
+Flat vector illustration in the style of a Korean elementary school textbook,
+icon-card style. Clean pure white background, no scenery, no gradient sky.
+A single cute chibi child with round rosy cheeks, simple black dot eyes,
+big happy smile, wearing a white PE shirt and blue shorts, mid-action.
+Small clean numeric labels and math symbols may appear on props (fine, these
+render correctly), but no Korean sentences or paragraphs anywhere in the scene.
+Thick rounded dark-navy outlines, soft flat pastel colors, no photorealism,
+no 3D render, no drop shadows. Rounded-rectangle border frame around the image.
+At the top, leave a clear horizontal band for a title banner to be added.
+```
+
+> **비율**: `16:10`, 572×362로 축소해서 사용
+
+### thumb1.png — 분수 패스 골든골 (빨강 `#ff6b6b`)
+```
+[공통 스타일]
+Subject: A soccer goal net at the top. A chibi kid mid-kick sends a soccer ball
+flying, with two small fraction tiles floating beside the ball showing simple
+fraction shapes (a circle split into colored slices, no digits needed — or
+clean digits like "1/4" and "3/4" if text renders well). Warm coral-red accents.
+```
+
+### thumb2.png — 삼각형 균형 버티기 (파랑 `#4dabf7`)
+```
+[공통 스타일]
+Subject: A chibi kid standing on a low wooden balance beam, both arms stretched
+out wide and straight forming a clear angle, one leg lifted, big focused smile.
+A single pastel triangle shape with a small angle-arc mark floats beside the kid.
+Sky-blue accents.
+```
+
+### thumb3.png — 소수 돌파 드리블 (초록 `#51cf66`)
+```
+[공통 스타일]
+Subject: A chibi kid dribbling an orange basketball toward a small hoop.
+The hoop rim has a clean decimal number on a little sign (e.g. "0.7"),
+motion lines behind the kid showing a fast dash. Fresh green accents.
+```
+
+### thumb4.png — 사각형 대형 만들기 (보라 `#da77f2`)
+```
+[공통 스타일]
+Subject: A grassy field seen from above-front. Three small chibi kids stand
+spread apart connected by a soft dashed outline of a quadrilateral, with one
+glowing footprint mark at the missing fourth corner. A fourth chibi kid dashes
+toward the glowing spot, motion lines behind their legs, big excited smile.
+Soft purple accents.
+```
+
+### thumb5.png — 꺾은선 스코어보드 (주황 `#ffa94d`)
+```
+[공통 스타일]
+Subject: A simple cartoon scoreboard panel showing a zigzag line graph with
+round dots at each turning point, small clean axis numbers (1–5). A chibi kid
+stands beside it pointing up at the highest dot with a bright smile, a soccer
+ball flying in a dotted arc toward a small goal in the corner. Warm orange accents.
+```
+
+### thumb6.png — 다각형 매트 체조 (청록 `#3bc9db`)
+```
+[공통 스타일]
+Subject: A purple gymnastics mat. A cute pastel hexagon and octagon shape with
+tiny dot "vertex" marks roll along the mat like tumbling characters (simple dot
+eyes only, no face needed), a chibi kid mid-cartwheel beside them, motion arcs.
+Turquoise accents.
+```
+
+---
+
+## 1️⃣ 종목 카드 썸네일 6장 — 예전 방식 (글자 없는 그림만, 참고용)
 
 ### thumb1.png — 분수 패스 골든골 🥅 (테두리색 `#ff6b6b` 빨강)
 
