@@ -47,83 +47,97 @@ Absolutely no text, no letters, no numbers written anywhere.
 
 ---
 
-## 🆕 카드형 스타일 (제목 배너 + 흰 배경 + 설명글 없음)
+## 🆕 닌텐도풍 카드 스타일 (권장 · 최신)
 
-다른 학년판 카드를 참고해서 만드는 새 버전입니다. 아래 기준으로 6장을 새로 만듭니다.
+앞서 만든 "플랫 벡터" 프롬프트는 결과가 밋밋했습니다. 원인은 `flat shading only / no gradients / no drop shadows`로 묶어 둔 것이었습니다. **닌텐도(마리오파티) 느낌은 오히려 광택·부드러운 음영·굵은 외곽선**이 핵심이라, 그 제약을 걷어냈습니다.
 
-- **제목은 그림 안에 굽습니다** (`단원 N` 배지 + 종목 이름) — 그래야 카드가 그림 하나로 완결됩니다
-- **설명 문장은 넣지 않습니다** — 참고 이미지에 있던 "~을 익혀요" 같은 밑줄 문장은 뺍니다
-- **배경은 흰색**에 가깝게, 장식은 최소화합니다
-- 숫자·수식(예: `3/4`, `0.4+0.3`, `1m 25cm`)은 **한글보다 훨씬 잘 나오니** 적극적으로 활용합니다. 문제는 **한글 제목**인데, 대부분의 생성기가 아직 약합니다 — 결과물에서 글자가 깨지면 그 부분만 캔바/파워포인트로 다시 얹으세요. (참고 이미지 수준의 정확한 한글은 Gemini/Imagen, Ideogram 계열이 상대적으로 낫습니다.)
+- **성별을 종목마다 지정**했습니다 (안 쓰면 전부 남학생으로 나옵니다). 여3·남2·혼성1로 맞췄습니다
+- **설명 문장 없음**, 배경은 흰색, 상단에 제목 띠 자리만 비워 둡니다
+- 숫자·수식(`1/4`, `0.7`)은 잘 나오지만 **한글 제목은 여전히 깨지기 쉽습니다.** 깨지면 캔바/파워포인트로 얹으세요
 
-### 공통 스타일 (아래 6개 프롬프트 앞에 공통으로 붙이세요)
+### 공통 스타일 (6개 프롬프트 앞에 붙이세요)
 
 ```
-Flat vector illustration in the style of a Korean elementary school textbook,
-icon-card style. Clean pure white background, no scenery, no gradient sky.
-A single cute chibi child with round rosy cheeks, simple black dot eyes,
-big happy smile, wearing a white PE shirt and blue shorts, mid-action.
-Small clean numeric labels and math symbols may appear on props (fine, these
-render correctly), but no Korean sentences or paragraphs anywhere in the scene.
-Thick rounded dark-navy outlines, soft flat pastel colors, no photorealism,
-no 3D render, no drop shadows. Rounded-rectangle border frame around the image.
-At the top, leave a clear horizontal band for a title banner to be added.
+Nintendo-style game icon illustration, in the spirit of Mario Party and Nintendo
+Switch game cards. Chunky rounded shapes, glossy toy-like surfaces with soft
+specular highlights, smooth cel shading with gentle gradients, thick rounded
+dark-navy outlines, bright saturated candy colors. Cute chibi proportions:
+big round head, small body, large sparkling eyes with light reflections, round
+rosy cheeks, joyful open-mouth smile. Bouncy exaggerated action pose with
+squash-and-stretch energy. Tiny star and sparkle accents around the subject.
+Clean pure white background, no scenery, no landscape, no gradient sky.
+Rounded-rectangle card frame around the whole image, leaving a clear empty
+horizontal band across the top for a title banner to be added later.
+Crisp high-detail polished finish, like official Nintendo promotional art.
+No photorealism, no Korean sentences, no paragraphs of text.
 ```
 
-> **비율**: `16:10`, 572×362로 축소해서 사용
+**네거티브 프롬프트** (넣을 수 있는 도구라면 꼭 넣으세요)
+```
+blurry, muddy colors, flat lifeless shading, dull grey background, cluttered
+background, extra limbs, deformed hands, watermark, photorealistic, garbled text
+```
+
+> **비율** `16:10` · **해상도** 가능한 크게(1536×960 이상) 뽑아서 572×362로 축소하면 훨씬 선명합니다 · 한 종목당 **4장씩 뽑아 고르세요**
 
 ### thumb1.png — 분수 패스 골든골 (빨강 `#ff6b6b`)
 ```
 [공통 스타일]
-Subject: A soccer goal net at the top. A chibi kid mid-kick sends a soccer ball
-flying, with two small fraction tiles floating beside the ball showing simple
-fraction shapes (a circle split into colored slices, no digits needed — or
-clean digits like "1/4" and "3/4" if text renders well). Warm coral-red accents.
+Subject: A cheerful chibi GIRL with a bouncy ponytail and a red headband, wearing
+a white PE shirt and red shorts, kicking a glossy soccer ball in a dynamic side
+pose, light swoosh trailing the ball. Two floating glossy pie-chart tokens beside
+her show fractions as colored slices — one quarter filled, three quarters filled —
+like collectible game items. A small goal net glints behind. Red and coral accents.
 ```
 
 ### thumb2.png — 삼각형 균형 버티기 (파랑 `#4dabf7`)
 ```
 [공통 스타일]
-Subject: A chibi kid standing on a low wooden balance beam, both arms stretched
-out wide and straight forming a clear angle, one leg lifted, big focused smile.
-A single pastel triangle shape with a small angle-arc mark floats beside the kid.
-Sky-blue accents.
+Subject: A chibi BOY with short tousled hair, wearing a white PE shirt and blue
+shorts, balancing on one leg on a shiny wooden balance beam, both arms stretched
+wide and straight, eyes shut in concentration with a proud smile. A glowing
+translucent triangle floats beside him with a small glowing angle arc at one
+corner, like a game HUD element. Sky-blue and cyan accents.
 ```
 
 ### thumb3.png — 소수 돌파 드리블 (초록 `#51cf66`)
 ```
 [공통 스타일]
-Subject: A chibi kid dribbling an orange basketball toward a small hoop.
-The hoop rim has a clean decimal number on a little sign (e.g. "0.7"),
-motion lines behind the kid showing a fast dash. Fresh green accents.
+Subject: A chibi GIRL with a short bob and a green sports headband, wearing a
+white PE shirt and green shorts, dribbling a glossy orange basketball while
+dashing forward, speed streaks behind her. A floating game-style hoop marker
+ahead shows a clean decimal number "0.7" on a rounded green plaque.
+Fresh green and lime accents.
 ```
 
 ### thumb4.png — 사각형 대형 만들기 (보라 `#da77f2`)
 ```
 [공통 스타일]
-Subject: A grassy field seen from above-front. Three small chibi kids stand
-spread apart connected by a soft dashed outline of a quadrilateral, with one
-glowing footprint mark at the missing fourth corner. A fourth chibi kid dashes
-toward the glowing spot, motion lines behind their legs, big excited smile.
-Soft purple accents.
+Subject: Four tiny chibi kids — two girls, two boys, varied hairstyles — on a
+glossy green field tile seen from a slight top-down angle. Three stand at three
+corners linked by a glowing dashed line forming most of a parallelogram; the
+fourth corner is an empty glowing footprint marker. The fourth kid, a girl with
+twin buns, dashes toward it with sparkles trailing her. Purple and magenta accents.
 ```
 
 ### thumb5.png — 꺾은선 스코어보드 (주황 `#ffa94d`)
 ```
 [공통 스타일]
-Subject: A simple cartoon scoreboard panel showing a zigzag line graph with
-round dots at each turning point, small clean axis numbers (1–5). A chibi kid
-stands beside it pointing up at the highest dot with a bright smile, a soccer
-ball flying in a dotted arc toward a small goal in the corner. Warm orange accents.
+Subject: A chibi BOY with round glasses and an orange cap, wearing a white PE
+shirt, jumping and pointing up at a glossy arcade-style scoreboard panel. The
+panel shows a bright zigzag line graph with glowing round dots at each turning
+point and small clean axis numbers 1 to 5. A soccer ball arcs toward a small
+goal at the corner. Orange and amber accents.
 ```
 
 ### thumb6.png — 다각형 매트 체조 (청록 `#3bc9db`)
 ```
 [공통 스타일]
-Subject: A purple gymnastics mat. A cute pastel hexagon and octagon shape with
-tiny dot "vertex" marks roll along the mat like tumbling characters (simple dot
-eyes only, no face needed), a chibi kid mid-cartwheel beside them, motion arcs.
-Turquoise accents.
+Subject: A chibi GIRL with twin braids in a turquoise gymnastics outfit,
+mid-cartwheel with a joyful expression and glowing motion arcs. Beside her, two
+cute glossy polygon characters — a hexagon and an octagon with tiny sparkling
+dot eyes — tumble along a soft purple gymnastics mat, star sparkles bouncing off
+them. Turquoise and mint accents.
 ```
 
 ---
