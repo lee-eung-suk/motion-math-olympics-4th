@@ -86,16 +86,22 @@ grumpy cartoon faces. The kid leans into the gap with a big confident smile,
 motion lines behind. Fresh green accent color. Fast, breakthrough feeling.
 ```
 
-### thumb4.png — 사각형 뒤집기 패스 🤾 (테두리색 `#da77f2` 보라`)
+### thumb4.png — 사각형 대형 만들기 🤾 (테두리색 `#da77f2` 보라)
+
+> ⚠️ 이 종목은 개발 중 "사각형 뒤집기 패스"(조각 회전)에서 **"사각형 대형 만들기"**(자리 찾아 뛰어가기)로 완전히 새로 설계됐습니다. 아래는 새 디자인에 맞춘 프롬프트입니다. 예전 프롬프트로 만든 그림이 있다면 아래 것으로 다시 만들어 주세요.
 
 ```
 [공통 스타일]
 
-Subject: A cute chibi kid mid-air in a handball jump-shot pose, twisting the torso
-sideways. In the kid's hand is a flat pastel quadrilateral tile (a rhombus shape)
-that is rotating, with curved motion arrows showing the spin.
-A wall of rounded defender blocks below has a diamond-shaped gap that matches the tile.
-Soft purple accent color. Dynamic, twisting motion.
+Subject: A grassy sports field seen from above-front. Three cute chibi kids in
+white PE shirts stand spread apart, each at one corner of an invisible shape,
+connected to each other by a soft dashed line. A fourth corner spot on the ground
+glows with a bright footprint mark, and a dashed line continues from the two
+nearest kids toward that glowing spot, hinting at a quadrilateral outline
+(a parallelogram) still missing its last corner.
+A fourth cute chibi kid is caught mid-run, dashing toward the glowing footprint
+with a big excited smile and motion lines behind their legs.
+Soft purple accent color. Energetic, "everyone find your spot" team feeling.
 ```
 
 ### thumb5.png — 꺾은선 스코어보드 📈 (테두리색 `#ffa94d` 주황)
