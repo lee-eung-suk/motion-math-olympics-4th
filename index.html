@@ -29,10 +29,11 @@
 </div>
 
 <div class="menu-wrap">
+  <!-- 헤더 + 컨트롤 -->
   <div class="menu-header">
     <div>
       <h1>🤸 수학 체육올림픽</h1>
-      <div class="sub">초등 4학년 2학기 · 동작 도전 &amp; 영역형 경쟁 6종목</div>
+      <div class="sub">초등 4학년 2학기</div>
     </div>
     <div class="actions">
       <span class="coin-badge" id="coinBadge">🪙 0</span>
@@ -42,16 +43,59 @@
     </div>
   </div>
 
-  <div class="section-label">🎮 종목을 고르면 바로 시작해요</div>
-  <div class="grid" id="grid"></div>
+  <!-- 대형 배너 섹션 -->
+  <section class="hero-banner">
+    <div class="hero-content">
+      <div class="hero-badge">🏅 동작 도전 &amp; 영역형 경쟁</div>
+      <h2 class="hero-title">온몸으로 푸는 수학!</h2>
+      <p class="hero-desc">6종목의 신나는 게임으로 4학년 2학기 수학을 완전히 정복해 보세요.</p>
+    </div>
+  </section>
 
-  <div class="start-cta-row">
-    <button class="start-cta" id="randomStartBtn">🎮 올림픽 시작하기</button>
-  </div>
+  <!-- 소개 섹션 -->
+  <section class="features-section">
+    <h3 class="section-title">✨ 이렇게 놀아요</h3>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">📷</div>
+        <h4>카메라 켜기</h4>
+        <p>웹캠만 있으면 준비 끝!</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🎮</div>
+        <h4>종목 고르기</h4>
+        <p>6개의 재미있는 게임 중 골라요</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🤸</div>
+        <h4>몸으로 답하기</h4>
+        <p>움직임으로 문제를 풀어요</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🏆</div>
+        <h4>메달 획득!</h4>
+        <p>60초 동안 최고 점수를 노려요</p>
+      </div>
+    </div>
+  </section>
 
-  <div class="footer">📄 개인정보 처리방침 · 카메라 영상은 저장되지 않아요 (녹화 영상은 기기에만 저장됩니다)</div>
-  <div class="credit">경북수학교육교사연구회 -수(數)다방-</div>
-  <div class="credit">만든 사람: 경북 소천초 교사 이응석</div>
+  <!-- 종목 선택 섹션 -->
+  <section class="games-section">
+    <h3 class="section-title">🎯 6가지 종목에 도전!</h3>
+    <div class="section-label">종목을 선택하면 바로 시작됩니다</div>
+    <div class="grid" id="grid"></div>
+
+    <div class="start-cta-row">
+      <button class="start-cta" id="randomStartBtn">🎲 랜덤 게임 시작하기</button>
+    </div>
+  </section>
+
+  <!-- 푸터 -->
+  <footer class="footer-section">
+    <div class="footer">📄 개인정보 처리방침 · 카메라 영상은 저장되지 않아요 (녹화 영상은 기기에만 저장됩니다)</div>
+    <div class="credit">경북수학교육교사연구회 -수(數)다방-</div>
+    <div class="credit">만든 사람: 경북 소천초 교사 이응석</div>
+  </footer>
 </div>
 
 <div class="overlay-panel" id="modePanel" style="display:none;position:fixed;">
