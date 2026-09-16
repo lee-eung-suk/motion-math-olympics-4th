@@ -89,6 +89,14 @@ section{padding:clamp(20px, 4vh, 32px) clamp(14px, 3vw, 28px);}
   font-size:clamp(0.95rem, 1vw + 0.6rem, 1.15rem);color:var(--muted);
   max-width:600px;margin:16px auto 0;line-height:1.6;
 }
+.hero-characters{
+  margin-top:clamp(20px, 4vh, 32px);
+  display:flex;justify-content:center;
+}
+.hero-characters img{
+  max-width:min(400px, 90vw);height:auto;
+  filter:drop-shadow(0 8px 16px rgba(0,0,0,0.2));
+}
 
 .section-title{
   font-size:clamp(1.4rem, 2.5vw + 0.8rem, 2rem);font-weight:900;
