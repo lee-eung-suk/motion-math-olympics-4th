@@ -719,18 +719,19 @@ function stepGame() {
         return;
       }
 
-      // 두 번째 분수 선택 — picked(a)와 합쳐서 T가 되는 분수 찾기
+      // 두 번째 분수 선택 — picked(a)와 합쳐서 T가 되는 분수(b)인지 확인
       if (stage === 1) {
-        const rest = partnerExists(round, best.f);
-        if (!rest) { fail(best.x, best.y, "이 친구로는 만들 수 없어요"); return; }
+        if (!F.eq(best.f, round.pair[1])) {
+          fail(best.x, best.y, "값이 맞지 않아요");
+          return;
+        }
         best.taken = true;
-        need = rest;
         trail.push({ from, to: { x: best.x, y: best.y } });
         stage = 2;
         solvedB = best.f;
         flyBall({ x: best.x, y: best.y });
         roundAt = performance.now();
-        spawnPopup(popups, best.x, best.y - best.R, "패스!", CUTE.blueDark);
+        spawnPopup(popups, best.x, best.y - best.R, "정답!", CUTE.blueDark);
         if (!isMuted()) sound.pop();
         // 선택 후 즉시 goal() 트리거
         setTimeout(() => { if (state === "playing") goal(best); }, 300);
