@@ -203,15 +203,16 @@ function genRound(level) {
     F.fromImp(Math.max(1, F.toImp(a) + 1), d),
     F.fromImp(Math.max(1, F.toImp(T) + F.toImp(a)), d),              // 빼야 할 것을 더함
   ];
-  const mates = [a, b];
+  // b만 선택지로 제시 (a는 처음부터 주어짐)
+  const mates = [b];
   for (const wf of shuffle(wrongPool)) {
-    if (mates.length >= 5) break;
+    if (mates.length >= 4) break;
     if (wf.n === 0 && wf.w === 0) continue;
     if (mates.some((m) => F.eq(m, wf))) continue;
     // 우연히 다른 정답 짝이 생기면 문제 자체는 여전히 옳지만, 헷갈림을 줄이려고 걸러낸다
     mates.push(wf);
   }
-  return { d, T, pair: [a, b], mates: shuffle(mates) };
+  return { d, T, pair: [a, b], mates: shuffle(mates), givenFrac: a };
 }
 
 // 남은 값(T - 고른 값)을 가진 동료가 코트에 있는지 — 있으면 첫 패스로 인정한다
@@ -321,7 +322,7 @@ function layoutMates() {
 
 function newRound() {
   round = genRound(autoDiff.level);
-  stage = 0; need = null; trail = []; picked = null; solvedB = null;
+  stage = 1; need = null; trail = []; picked = round.givenFrac; solvedB = null;
   ballAt = ballPos(); ballFly = null;
   layoutMates();
   resolving = false;
@@ -378,8 +379,7 @@ function beginPlay() {
 function goal(m) {
   if (resolving) return;
   resolving = true;
-  // 식의 두 번째 칸까지 채워서 "3/5 + 1/5 = 4/5" 전체를 잠깐 보여준다 — 이게 이 게임의 학습 포인트다
-  solvedB = m.f;
+  // 식의 두 칸이 모두 채워져서 "3/5 + 1/5 = 4/5" 전체를 보여준다 — 이게 이 게임의 학습 포인트다
   stage = 2;
   count++; combo++;
   mascot.cheer();
@@ -411,7 +411,7 @@ function fail(x, y, msg) {
   resolving = true;
   combo = 0;
   // 틀린 순간이 가장 잘 배우는 순간 — 완성된 식을 초록으로 보여준다
-  picked = round.pair[0]; solvedB = round.pair[1]; stage = 2;
+  solvedB = round.pair[1]; stage = 2;
   reveal.show({ eq: true });
   mascot.oops();
   fever.reset();
@@ -561,7 +561,7 @@ function goReady() {
 
 function drawTopPanel(ctx, remain) {
   drawHudPanel(ctx, dims, fluidPx, {
-    left: stage === 0 ? "① 더할 분수 하나를 고르세요" : "② 얼마가 더 필요한지 계산해요",
+    left: "② 얼마가 더 필요한지 고르세요",
     right: `🔥 ${combo}   🏅 ${count}골   ⏱ ${Math.ceil(remain / 1000)}초`,
     headline: "두 분수를 더해 골대 숫자 만들기!",
   });
@@ -662,18 +662,18 @@ function drawEquation(ctx) {
   };
 
   let x = w / 2 - totalW / 2 + slotW / 2;
-  drawEqSlot(ctx, picked, x, cy, size, done ? "goal" : picked ? "filled" : "next");
+  drawEqSlot(ctx, picked, x, cy, size, "filled");
   x += slotW / 2 + opW / 2;
   op("+", x);
   x += opW / 2 + slotW / 2;
-  drawEqSlot(ctx, solvedB, x, cy, size, done ? "goal" : picked ? "next" : "empty");
+  drawEqSlot(ctx, solvedB, x, cy, size, done ? "goal" : solvedB ? "filled" : "next");
   x += slotW / 2 + opW / 2;
   op("=", x);
   x += opW / 2 + goalW / 2;
   drawGoalSlot(ctx, round.T, x, cy, size);
 
-  // 두 번째 칸을 채울 차례면 "얼마가 더 필요한지"를 작게 귀띔한다
-  if (picked && !done) {
+  // 첫 칸이 채워졌으니 두 번째 칸을 채울 차례면 "얼마가 더 필요한지"를 작게 귀띔한다
+  if (!solvedB && !done) {
     drawChunkyText(ctx, "얼마를 더해야 할까요?", w / 2, cy + boxH * 0.62,
       fluidPx(dims, 15, { min: 11, max: 20 }), "#ffffff",
       { outline: CUTE.ink, outlineWidth: fluidPx(dims, 5, { min: 3, max: 7 }) });
@@ -712,29 +712,28 @@ function stepGame() {
       if (!best) continue;
 
       // 공에서 그 친구까지 패스 길에 수비수가 서 있으면 가로채기 — 빈 공간을 찾아야 한다
-      const from = stage === 0 ? ball : trail.length ? trail[trail.length - 1].to : ball;
+      const from = trail.length ? trail[trail.length - 1].to : ball;
       const blocker = defenders.find((d) => distToSegment(d, from, best) < d.r * 0.8);
       if (blocker) {
         fail(blocker.x, blocker.y, "수비에 막혔어요!");
         return;
       }
 
-      if (stage === 0) {
+      // 두 번째 분수 선택 — picked(a)와 합쳐서 T가 되는 분수 찾기
+      if (stage === 1) {
         const rest = partnerExists(round, best.f);
         if (!rest) { fail(best.x, best.y, "이 친구로는 만들 수 없어요"); return; }
         best.taken = true;
         need = rest;
         trail.push({ from, to: { x: best.x, y: best.y } });
-        stage = 1;
-        picked = best.f;
+        stage = 2;
+        solvedB = best.f;
         flyBall({ x: best.x, y: best.y });
         roundAt = performance.now();
         spawnPopup(popups, best.x, best.y - best.R, "패스!", CUTE.blueDark);
         if (!isMuted()) sound.pop();
-      } else {
-        if (F.eq(best.f, need)) goal(best);
-        else fail(best.x, best.y, "값이 맞지 않아요");
-        return;
+        // 선택 후 즉시 goal() 트리거
+        setTimeout(() => { if (state === "playing") goal(best); }, 300);
       }
       break;
     }
